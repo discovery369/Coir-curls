@@ -8,7 +8,8 @@ import * as Sharing from "expo-sharing";
 import { useEffect, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number };
+type Payment = { id: string; date: string; amount: number };
+type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[] };
 type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number };
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
 
@@ -21,7 +22,9 @@ const money = (v: number) => `₹${new Intl.NumberFormat("en-IN", { minimumFract
 const displayDate = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-const isPending = (r: Income) => r.status === "pending";
+const paidSum = (r: Income) => (r.payments || []).reduce((sum, p) => sum + p.amount, 0);
+const dueOf = (r: Income) => { const paid = paidSum(r); if (paid > 0) return Math.max(0, r.amount - paid); return r.status === "pending" ? r.amount : 0; };
+const hasDue = (r: Income) => dueOf(r) > 0.009;
 const isSameDay = (a: Date | null, b: Date) => !!a && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const daysSince = (iso: string) => Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(iso)).getTime()) / 86400000);
 
@@ -37,6 +40,7 @@ export default function Index() {
   const [dateTo, setDateTo] = useState<Date | null>(null);
   const [showReminders, setShowReminders] = useState(false);
   const [showCustomers, setShowCustomers] = useState(false);
+  const [paying, setPaying] = useState<string | null>(null);
   const [overdueDays, setOverdueDays] = useState(15);
 
   useEffect(() => {
@@ -50,7 +54,7 @@ export default function Index() {
 
   const totalIncome = useMemo(() => incomes.reduce((sum, row) => sum + row.amount, 0), [incomes]);
   const totalExpenses = useMemo(() => expenses.reduce((sum, row) => sum + row.amount + (row.repairAmount || 0), 0), [expenses]);
-  const outstanding = useMemo(() => incomes.filter(isPending).reduce((sum, row) => sum + row.amount, 0), [incomes]);
+  const outstanding = useMemo(() => incomes.reduce((sum, row) => sum + dueOf(row), 0), [incomes]);
 
   const remove = (kind: "income" | "expense", id: string) => setConfirm({
     title: "Delete this record?",
@@ -58,15 +62,22 @@ export default function Index() {
     confirmLabel: "Delete",
     onConfirm: () => kind === "income" ? setIncomes((rows) => rows.filter((row) => row.id !== id)) : setExpenses((rows) => rows.filter((row) => row.id !== id)),
   });
-  const toggleStatus = (id: string) => setIncomes((rows) => rows.map((row) => row.id === id ? { ...row, status: isPending(row) ? "paid" : "pending" } : row));
+  const updateIncome = (rec: Income) => setIncomes((rows) => rows.map((row) => row.id === rec.id ? rec : row));
+  const settleIncome = (id: string) => setIncomes((rows) => rows.map((row) => {
+    if (row.id !== id) return row;
+    const due = dueOf(row);
+    const payments = due > 0 ? [...(row.payments || []), { id: String(Date.now()), date: new Date().toISOString(), amount: due }] : (row.payments || []);
+    return { ...row, payments, status: "paid" as const };
+  }));
   const open = (kind: "income" | "expense", id?: string) => setEditing({ kind, id });
+  const payingRecord = incomes.find((row) => row.id === paying) || null;
   const title = tab === "settings" ? "Settings" : tab === "calendar" ? "Calendar" : tab === "income" ? "Income" : tab === "expenses" ? "Expenses" : "Overview";
 
   return (
     <SafeAreaView style={s.safe}>
       <View style={s.header}>
         <View>
-          <Text style={s.brand}>Coir Ledger</Text>
+          <Text style={s.brand}>SVKD COIR</Text>
           <View style={s.localRow}><View style={s.dot} /><Text style={s.local}>Stored on this device</Text></View>
         </View>
         <MaterialCommunityIcons name="dots-horizontal" size={24} color={C.muted} />
@@ -120,7 +131,7 @@ export default function Index() {
 
             <Filters query={query} setQuery={setQuery} dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} />
 
-            {(tab === "overview" || tab === "income") && <Ledger kind="income" rows={incomes} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("income")} onEdit={(id) => open("income", id)} onDelete={remove} onToggleStatus={toggleStatus} />}
+            {(tab === "overview" || tab === "income") && <Ledger kind="income" rows={incomes} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("income")} onEdit={(id) => open("income", id)} onDelete={remove} onOpenPayment={(id) => setPaying(id)} />}
             {(tab === "overview" || tab === "expenses") && <Ledger kind="expense" rows={expenses} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("expense")} onEdit={(id) => open("expense", id)} onDelete={remove} />}
           </>
         )}
@@ -161,8 +172,9 @@ export default function Index() {
         />
       )}
 
-      {showReminders && <RemindersModal incomes={incomes} overdueDays={overdueDays} setOverdueDays={setOverdueDays} onMarkPaid={toggleStatus} onClose={() => setShowReminders(false)} />}
+      {showReminders && <RemindersModal incomes={incomes} overdueDays={overdueDays} setOverdueDays={setOverdueDays} onSettle={settleIncome} onOpenPayment={(id) => { setShowReminders(false); setPaying(id); }} onClose={() => setShowReminders(false)} />}
       {showCustomers && <CustomersModal incomes={incomes} onClose={() => setShowCustomers(false)} />}
+      {payingRecord && <PaymentModal record={payingRecord} onChange={updateIncome} onClose={() => setPaying(null)} />}
 
       {confirm && (
         <ConfirmModal
@@ -270,7 +282,7 @@ function Filters({ query, setQuery, dateFrom, dateTo, setDateFrom, setDateTo }: 
   );
 }
 
-function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, onToggleStatus }: { kind: "income" | "expense"; rows: (Income | Expense)[]; query: string; dateFrom: Date | null; dateTo: Date | null; onAdd: () => void; onEdit: (id: string) => void; onDelete: (kind: "income" | "expense", id: string) => void; onToggleStatus?: (id: string) => void }) {
+function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, onOpenPayment }: { kind: "income" | "expense"; rows: (Income | Expense)[]; query: string; dateFrom: Date | null; dateTo: Date | null; onAdd: () => void; onEdit: (id: string) => void; onDelete: (kind: "income" | "expense", id: string) => void; onOpenPayment?: (id: string) => void }) {
   const isIncome = kind === "income";
   const [chip, setChip] = useState("All");
   const chips = isIncome ? ["All", "Coir Pith", "Coir Bale"] : ["All", "Salaries", "Current bill", "Maintenance", "Husk"];
@@ -323,16 +335,18 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
           <Text style={s.emptyCopy}>{hasFilter ? "Try a different search or filter." : isIncome ? "Add your first Coir Pith or Coir Bale sale." : "Add salaries, current bill, maintenance or husk."}</Text>
         </View>
       ) : filtered.map((row) => {
-        const pending = isIncome && isPending(row as Income);
+        const due = isIncome ? dueOf(row as Income) : 0;
+        const partPaid = isIncome && paidSum(row as Income) > 0 && due > 0;
+        const badgeLabel = due > 0 ? (partPaid ? "PART PAID" : "PENDING") : "PAID";
         return (
           <View key={row.id} style={s.row}>
             <Text style={[s.rowText, s.dateCell]}>{displayDate(row.date)}</Text>
             <View style={s.cell}>
               <Text style={s.rowText} numberOfLines={2}>{describeRow(row)}</Text>
               {isIncome && (
-                <Pressable testID="income-status-toggle" accessibilityRole="button" accessibilityLabel="Toggle payment status" hitSlop={10} onPress={() => onToggleStatus?.(row.id)} style={[s.badge, pending ? s.badgePending : s.badgePaid]}>
-                  <MaterialCommunityIcons name={pending ? "clock-outline" : "check-circle"} size={12} color={pending ? C.action : C.income} />
-                  <Text style={[s.badgeText, { color: pending ? C.action : C.income }]}>{pending ? "PENDING" : "PAID"}</Text>
+                <Pressable testID="income-status-toggle" accessibilityRole="button" accessibilityLabel="Manage payments" hitSlop={10} onPress={() => onOpenPayment?.(row.id)} style={[s.badge, due > 0 ? s.badgePending : s.badgePaid]}>
+                  <MaterialCommunityIcons name={due > 0 ? "clock-outline" : "check-circle"} size={12} color={due > 0 ? C.action : C.income} />
+                  <Text style={[s.badgeText, { color: due > 0 ? C.action : C.income }]}>{badgeLabel}</Text>
                 </Pressable>
               )}
             </View>
@@ -556,7 +570,7 @@ function CalendarView({ incomes, expenses }: { incomes: Income[]; expenses: Expe
     try {
       const html = buildMonthHTML(monthName, monthIncomes, monthExpenses, monthIncome, monthExpense);
       if (Platform.OS === "web") await Print.printAsync({ html });
-      else { const { uri } = await Print.printToFileAsync({ html }); if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: `Coir Ledger — ${monthName}`, UTI: "com.adobe.pdf" }); }
+      else { const { uri } = await Print.printToFileAsync({ html }); if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: `SVKD COIR — ${monthName}`, UTI: "com.adobe.pdf" }); }
     } catch { /* cancelled */ } finally { setExporting(false); }
   };
 
@@ -581,6 +595,8 @@ function CalendarView({ incomes, expenses }: { incomes: Income[]; expenses: Expe
             <View><Text style={s.panelLabel}>EXPENSES</Text><Text style={s.calendarExpense}>{money(monthExpense)}</Text></View>
             <View><Text style={s.panelLabel}>NET</Text><Text style={[s.calendarNet, { color: monthIncome - monthExpense >= 0 ? C.income : C.expense }]}>{money(monthIncome - monthExpense)}</Text></View>
           </View>
+
+          <ProductInsights incomes={monthIncomes} scope="This month" />
 
           <Pressable testID="export-month-button" onPress={exportPdf} disabled={exporting || rows.length === 0} style={[s.exportButton, (exporting || rows.length === 0) && s.exportDisabled]}>
             <MaterialCommunityIcons name="file-pdf-box" size={19} color="#fff" />
@@ -625,6 +641,7 @@ function YearOverview({ incomes, expenses, yearRef, setYearRef }: { incomes: Inc
     return { label, inc, exp, net: inc - exp };
   });
   const max = Math.max(1, ...data.map((d) => Math.max(d.inc, d.exp)));
+  const yearIncomes = incomes.filter((r) => new Date(r.date).getFullYear() === yearRef);
   const active = data.filter((d) => d.inc || d.exp);
   const yearIncome = data.reduce((s, d) => s + d.inc, 0);
   const yearExpense = data.reduce((s, d) => s + d.exp, 0);
@@ -674,6 +691,7 @@ function YearOverview({ incomes, expenses, yearRef, setYearRef }: { incomes: Inc
             {best && <View style={s.bwItem}><MaterialCommunityIcons name="trophy-outline" size={16} color={C.income} /><Text style={s.bwText}>Best: <Text style={s.bwStrong}>{best.label}</Text> ({money(best.net)})</Text></View>}
             {worst && <View style={s.bwItem}><MaterialCommunityIcons name="trending-down" size={16} color={C.expense} /><Text style={s.bwText}>Lowest: <Text style={s.bwStrong}>{worst.label}</Text> ({money(worst.net)})</Text></View>}
           </View>
+          <ProductInsights incomes={yearIncomes} scope={String(yearRef)} />
         </>
       )}
     </View>
@@ -706,7 +724,7 @@ function DayDetailModal({ dateKey, incomes, expenses, onClose }: { dateKey: stri
               <View key={r.id} testID="day-detail-income-row" style={s.detailRow}>
                 <View style={s.detailRowMain}>
                   <Text style={s.detailRowTitle}>{describeRow(r)}</Text>
-                  <Text style={[s.detailStatus, { color: isPending(r) ? C.action : C.income }]}>{isPending(r) ? "Pending" : "Paid"}</Text>
+                  <Text style={[s.detailStatus, { color: dueOf(r) > 0 ? C.action : C.income }]}>{dueOf(r) > 0 ? `Due ${money(dueOf(r))}` : "Paid"}</Text>
                 </View>
                 <Text style={[s.detailAmount, { color: C.income }]}>+ {money(r.amount)}</Text>
               </View>
@@ -726,9 +744,9 @@ function DayDetailModal({ dateKey, incomes, expenses, onClose }: { dateKey: stri
   );
 }
 
-function RemindersModal({ incomes, overdueDays, setOverdueDays, onMarkPaid, onClose }: { incomes: Income[]; overdueDays: number; setOverdueDays: (n: number) => void; onMarkPaid: (id: string) => void; onClose: () => void }) {
-  const overdue = incomes.filter(isPending).map((r) => ({ r, days: daysSince(r.date) })).filter((x) => x.days >= overdueDays).sort((a, b) => b.days - a.days);
-  const totalOverdue = overdue.reduce((sum, x) => sum + x.r.amount, 0);
+function RemindersModal({ incomes, overdueDays, setOverdueDays, onSettle, onOpenPayment, onClose }: { incomes: Income[]; overdueDays: number; setOverdueDays: (n: number) => void; onSettle: (id: string) => void; onOpenPayment: (id: string) => void; onClose: () => void }) {
+  const overdue = incomes.filter(hasDue).map((r) => ({ r, days: daysSince(r.date) })).filter((x) => x.days >= overdueDays).sort((a, b) => b.days - a.days);
+  const totalOverdue = overdue.reduce((sum, x) => sum + dueOf(x.r), 0);
   return (
     <Modal animationType="slide" transparent visible onRequestClose={onClose}>
       <View style={s.modalWrap}>
@@ -758,17 +776,17 @@ function RemindersModal({ incomes, overdueDays, setOverdueDays, onMarkPaid, onCl
               <View style={s.empty}>
                 <MaterialCommunityIcons name="check-circle-outline" size={30} color={C.income} />
                 <Text style={s.emptyTitle}>Nothing overdue</Text>
-                <Text style={s.emptyCopy}>No pending payments older than {overdueDays} days.</Text>
+                <Text style={s.emptyCopy}>No dues older than {overdueDays} days.</Text>
               </View>
             ) : overdue.map(({ r, days }) => (
               <View key={r.id} testID="reminder-row" style={s.detailRow}>
-                <View style={s.detailRowMain}>
+                <Pressable style={s.detailRowMain} testID="reminder-open-payment" onPress={() => onOpenPayment(r.id)}>
                   <Text style={s.detailRowTitle}>{r.name || "Unnamed customer"}</Text>
-                  <Text style={s.reminderMeta}>{r.product} · {days} days overdue</Text>
-                </View>
+                  <Text style={s.reminderMeta}>{r.product} · {days} days overdue · due {money(dueOf(r))}</Text>
+                </Pressable>
                 <View style={s.reminderRight}>
-                  <Text style={[s.detailAmount, { color: C.action }]}>{money(r.amount)}</Text>
-                  <Pressable testID="reminder-mark-paid" hitSlop={8} onPress={() => onMarkPaid(r.id)} style={s.markPaid}><Text style={s.markPaidText}>Mark paid</Text></Pressable>
+                  <Pressable testID="reminder-record-payment" hitSlop={8} onPress={() => onOpenPayment(r.id)} style={s.recordBtn}><Text style={s.recordBtnText}>Record</Text></Pressable>
+                  <Pressable testID="reminder-mark-paid" hitSlop={8} onPress={() => onSettle(r.id)} style={s.markPaid}><Text style={s.markPaidText}>Mark paid</Text></Pressable>
                 </View>
               </View>
             ))}
@@ -786,7 +804,7 @@ function CustomersModal({ incomes, onClose }: { incomes: Income[]; onClose: () =
   incomes.forEach((r) => {
     const key = (r.name || "").trim() || "Unnamed customer";
     const cur = map.get(key) || { name: key, total: 0, pending: 0, count: 0, records: [] };
-    cur.total += r.amount; if (isPending(r)) cur.pending += r.amount; cur.count += 1; cur.records.push(r);
+    cur.total += r.amount; cur.pending += dueOf(r); cur.count += 1; cur.records.push(r);
     map.set(key, cur);
   });
   const customers = [...map.values()].sort((a, b) => b.pending - a.pending || b.total - a.total);
@@ -855,7 +873,7 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onRestore, requ
       } else {
         const uri = FileSystem.documentDirectory + `coir-ledger-backup-${new Date().toISOString().slice(0, 10)}.json`;
         await FileSystem.writeAsStringAsync(uri, payload);
-        if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/json", dialogTitle: "Coir Ledger backup" });
+        if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/json", dialogTitle: "SVKD COIR backup" });
         else { await Clipboard.setStringAsync(payload); setNotice("Backup copied to clipboard."); }
       }
     } catch { setNotice("Could not create backup."); }
@@ -868,7 +886,7 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onRestore, requ
       const asset = res.assets[0];
       const content = Platform.OS === "web" ? await (await fetch(asset.uri)).text() : await FileSystem.readAsStringAsync(asset.uri);
       const parsed = JSON.parse(content);
-      if (!Array.isArray(parsed.incomes) || !Array.isArray(parsed.expenses)) { setNotice("That file is not a Coir Ledger backup."); return; }
+      if (!Array.isArray(parsed.incomes) || !Array.isArray(parsed.expenses)) { setNotice("That file is not a SVKD COIR backup."); return; }
       requestConfirm({
         title: "Restore this backup?",
         message: `This replaces your current data with ${parsed.incomes.length} income and ${parsed.expenses.length} expense records.`,
@@ -912,18 +930,120 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onRestore, requ
   );
 }
 
+function PaymentModal({ record, onChange, onClose }: { record: Income; onChange: (r: Income) => void; onClose: () => void }) {
+  const payments = record.payments || [];
+  const paid = paidSum(record);
+  const due = Math.max(0, record.amount - paid);
+  const [amt, setAmt] = useState(due ? String(Math.round(due)) : "");
+  const [date, setDate] = useState(new Date());
+  const [showDate, setShowDate] = useState(false);
+
+  const commit = (np: Payment[]) => {
+    const newPaid = np.reduce((sum, p) => sum + p.amount, 0);
+    onChange({ ...record, payments: np, status: newPaid >= record.amount - 0.009 ? "paid" : "pending" });
+  };
+  const addPayment = () => {
+    const v = Number(amt.replace(/,/g, ""));
+    if (!v || v <= 0) return;
+    commit([...payments, { id: String(Date.now()), date: date.toISOString(), amount: v }]);
+    setAmt("");
+  };
+  const removePayment = (id: string) => commit(payments.filter((p) => p.id !== id));
+  const settle = () => { if (due > 0) commit([...payments, { id: String(Date.now()), date: new Date().toISOString(), amount: due }]); };
+
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={s.modalWrap}>
+        <View style={s.sheet}>
+          <View style={s.sheetHandle} />
+          <View style={[s.formHead, s.detailHeaderPad]}>
+            <View>
+              <Text style={s.detailOverline}>PAYMENTS</Text>
+              <Text style={s.formTitle}>{record.name || "Customer"}</Text>
+            </View>
+            <Pressable testID="payment-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
+          </View>
+          <ScrollView testID="payment-modal" style={s.detailScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <View style={s.detailSummary}>
+              <View><Text style={s.panelLabel}>TOTAL</Text><Text style={[s.smallAmount, { color: C.ink }]}>{money(record.amount)}</Text></View>
+              <View><Text style={s.panelLabel}>PAID</Text><Text style={[s.smallAmount, { color: C.income }]}>{money(paid)}</Text></View>
+              <View><Text style={s.panelLabel}>DUE</Text><Text testID="payment-due" style={[s.smallAmount, { color: due > 0 ? C.action : C.income }]}>{money(due)}</Text></View>
+            </View>
+
+            {due > 0 && (
+              <>
+                <Text style={s.detailSectionLabel}>RECORD A PART-PAYMENT</Text>
+                <Pressable testID="payment-date-input" style={s.inputRow} onPress={() => setShowDate(true)}>
+                  <MaterialCommunityIcons name="calendar-month-outline" size={20} color={C.forest} />
+                  <Text style={s.inputValue}>{displayDate(date.toISOString())}</Text>
+                  <MaterialCommunityIcons name="chevron-down" size={20} color={C.muted} />
+                </Pressable>
+                <View style={s.payRow}>
+                  <View style={[s.amountInput, { flex: 1 }]}>
+                    <Text style={s.rupee}>₹</Text>
+                    <TextInput testID="payment-amount-input" value={amt} onChangeText={setAmt} placeholder="0.00" placeholderTextColor="#9DA49D" keyboardType="decimal-pad" style={s.textInput} />
+                  </View>
+                  <Pressable testID="payment-add-button" onPress={addPayment} style={s.payAdd}><Text style={s.saveText}>Add</Text></Pressable>
+                </View>
+                <Pressable testID="payment-settle-button" onPress={settle} style={s.settleBtn}><Text style={s.settleBtnText}>Settle full due ({money(due)})</Text></Pressable>
+              </>
+            )}
+
+            <Text style={s.detailSectionLabel}>PAYMENT HISTORY</Text>
+            {payments.length === 0 ? <Text style={s.detailEmpty}>No payments recorded yet.</Text> : [...payments].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((p) => (
+              <View key={p.id} testID="payment-history-row" style={s.detailRow}>
+                <Text style={s.detailRowTitle}>{displayDate(p.date)}</Text>
+                <View style={s.reminderRight}>
+                  <Text style={[s.detailAmount, { color: C.income }]}>{money(p.amount)}</Text>
+                  <Pressable testID="payment-delete" hitSlop={8} onPress={() => removePayment(p.id)}><MaterialCommunityIcons name="trash-can-outline" size={18} color={C.expense} /></Pressable>
+                </View>
+              </View>
+            ))}
+            <View style={{ height: 30 }} />
+          </ScrollView>
+          {showDate && <DatePickerModal value={date} title="Payment date" onSelect={(d) => { setDate(d); setShowDate(false); }} onClose={() => setShowDate(false)} />}
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function ProductInsights({ incomes, scope }: { incomes: Income[]; scope: string }) {
+  const pith = incomes.filter((r) => r.product === "Coir Pith").reduce((sum, r) => sum + r.amount, 0);
+  const bale = incomes.filter((r) => r.product === "Coir Bale").reduce((sum, r) => sum + r.amount, 0);
+  if (pith + bale === 0) return null;
+  const max = Math.max(pith, bale, 1);
+  const leader = pith === bale ? "tie" : pith > bale ? "Coir Pith" : "Coir Bale";
+  const items = [{ name: "Coir Pith", val: pith }, { name: "Coir Bale", val: bale }];
+  return (
+    <View testID="product-insights" style={s.insightsCard}>
+      <View style={s.insightsHead}>
+        <Text style={s.insightsTitle}>PRODUCT INSIGHTS · {scope.toUpperCase()}</Text>
+        <Text style={s.insightsLeader}>{leader === "tie" ? "Even split" : `Top: ${leader}`}</Text>
+      </View>
+      {items.map((p) => (
+        <View key={p.name} style={s.insightRow}>
+          <Text style={s.insightName}>{p.name}</Text>
+          <View style={s.insightTrack}><View style={[s.insightFill, { width: `${Math.round((p.val / max) * 100)}%`, backgroundColor: p.name === leader ? C.income : C.action }]} /></View>
+          <Text style={s.insightVal}>{money(p.val)}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 const escapeHtml = (v: unknown) => String(v ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
 const pdfStyle = `* { box-sizing: border-box; } body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1F2924; padding: 28px; } h1 { font-size: 22px; margin: 0; } .sub { color: #59635C; font-size: 12px; margin: 4px 0 20px; } .cards { display: flex; gap: 12px; margin-bottom: 22px; } .card { flex: 1; border: 1px solid #D8D1C4; border-radius: 8px; padding: 12px 14px; } .card .k { font-size: 10px; letter-spacing: 1px; color: #59635C; text-transform: uppercase; } .card .v { font-size: 18px; font-weight: 700; margin-top: 6px; } .inc { color: #2F7D57; } .exp { color: #B65A43; } h2 { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #C76B35; margin: 22px 0 8px; } table { width: 100%; border-collapse: collapse; font-size: 12px; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #E6DFD2; } th { background: #F0E9DC; font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: #59635C; } td.amt, th.amt { text-align: right; font-variant-numeric: tabular-nums; } td.empty { text-align: center; color: #9DA49D; font-style: italic; } tfoot td { font-weight: 700; border-top: 2px solid #1F2924; } .foot { margin-top: 26px; font-size: 10px; color: #9DA49D; }`;
 
 function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totIn: number, totEx: number) {
   const incRows = incs.length
-    ? incs.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.product)}</td><td>${escapeHtml(r.name)}</td><td>${isPending(r) ? "Pending" : "Paid"}</td><td class="amt">${escapeHtml(money(r.amount))}</td></tr>`).join("")
+    ? incs.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.product)}</td><td>${escapeHtml(r.name)}</td><td>${dueOf(r) > 0 ? "Pending" : "Paid"}</td><td class="amt">${escapeHtml(money(r.amount))}</td></tr>`).join("")
     : `<tr><td colspan="5" class="empty">No income recorded</td></tr>`;
   const expRows = exps.length
     ? exps.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.category)}</td><td>${escapeHtml(r.description || (r.category === "Husk" && r.trips ? `${r.trips} trips @ ₹${r.costPerTon}/trip` : ""))}</td><td class="amt">${escapeHtml(money(r.amount + (r.repairAmount || 0)))}</td></tr>`).join("")
     : `<tr><td colspan="4" class="empty">No expenses recorded</td></tr>`;
   return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
-    <h1>Coir Ledger</h1>
+    <h1>SVKD COIR</h1>
     <div class="sub">${escapeHtml(monthName)} · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
     <div class="cards">
       <div class="card"><div class="k">Total Income</div><div class="v inc">${escapeHtml(money(totIn))}</div></div>
@@ -936,16 +1056,16 @@ function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totI
     <h2>Expenses</h2>
     <table><thead><tr><th>Date</th><th>Category</th><th>Details</th><th class="amt">Amount</th></tr></thead>
     <tbody>${expRows}</tbody><tfoot><tr><td colspan="3">Total expenses</td><td class="amt">${escapeHtml(money(totEx))}</td></tr></tfoot></table>
-    <div class="foot">Stored on device · Coir Ledger</div>
+    <div class="foot">Stored on device · SVKD COIR</div>
   </body></html>`;
 }
 
 function buildCustomerHTML(name: string, records: Income[], total: number, pending: number) {
   const sorted = [...records].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  const rows = sorted.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.product)}</td><td>${r.tons ? `${r.tons}t @ ₹${r.costPerTon}/t` : "—"}</td><td>${isPending(r) ? "Pending" : "Paid"}</td><td class="amt">${escapeHtml(money(r.amount))}</td></tr>`).join("");
+  const rows = sorted.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.product)}</td><td>${r.tons ? `${r.tons}t @ ₹${r.costPerTon}/t` : "—"}</td><td>${dueOf(r) > 0 ? `Due ${money(dueOf(r))}` : "Paid"}</td><td class="amt">${escapeHtml(money(r.amount))}</td></tr>`).join("");
   return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
     <h1>Statement · ${escapeHtml(name)}</h1>
-    <div class="sub">Coir Ledger · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
+    <div class="sub">SVKD COIR · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
     <div class="cards">
       <div class="card"><div class="k">Total Purchased</div><div class="v inc">${escapeHtml(money(total))}</div></div>
       <div class="card"><div class="k">Amount Paid</div><div class="v">${escapeHtml(money(total - pending))}</div></div>
@@ -955,7 +1075,7 @@ function buildCustomerHTML(name: string, records: Income[], total: number, pendi
     <table><thead><tr><th>Date</th><th>Product</th><th>Qty / Rate</th><th>Status</th><th class="amt">Amount</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="5" class="empty">No purchases</td></tr>`}</tbody>
     <tfoot><tr><td colspan="4">Outstanding due</td><td class="amt">${escapeHtml(money(pending))}</td></tr></tfoot></table>
-    <div class="foot">Thank you for your business · Coir Ledger</div>
+    <div class="foot">Thank you for your business · SVKD COIR</div>
   </body></html>`;
 }
 
@@ -1143,6 +1263,21 @@ const s = StyleSheet.create({
   confirmMessage: { color: C.muted, fontSize: 14, marginTop: 8, lineHeight: 20 },
   confirmButtons: { flexDirection: "row", gap: 10, marginTop: 22 },
   confirmDanger: { flex: 1.4, minHeight: 50, backgroundColor: C.expense, alignItems: "center", justifyContent: "center", borderRadius: 8 },
+  recordBtn: { borderWidth: 1, borderColor: C.forest, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
+  recordBtnText: { color: C.forest, fontSize: 12, fontWeight: "800" },
+  payRow: { flexDirection: "row", gap: 8, marginTop: 8 },
+  payAdd: { minWidth: 72, paddingHorizontal: 16, backgroundColor: C.forest, alignItems: "center", justifyContent: "center", borderRadius: 4 },
+  settleBtn: { marginTop: 10, minHeight: 44, borderRadius: 8, borderWidth: 1, borderColor: C.forest, alignItems: "center", justifyContent: "center" },
+  settleBtnText: { color: C.forest, fontWeight: "800", fontSize: 13 },
+  insightsCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 14, marginTop: 14 },
+  insightsHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
+  insightsTitle: { color: C.action, fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
+  insightsLeader: { color: C.forest, fontSize: 11, fontWeight: "800" },
+  insightRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 8 },
+  insightName: { width: 68, color: C.ink, fontSize: 12, fontWeight: "700" },
+  insightTrack: { flex: 1, height: 10, backgroundColor: "#F0E9DC", borderRadius: 5, overflow: "hidden" },
+  insightFill: { height: 10, borderRadius: 5 },
+  insightVal: { width: 84, textAlign: "right", color: C.ink, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 11, fontWeight: "800" },
   datePickerCard: { width: "100%", backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 14, padding: 18 },
   dpHeading: { color: C.action, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 10 },
   dpHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },

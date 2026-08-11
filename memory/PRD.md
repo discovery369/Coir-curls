@@ -1,4 +1,4 @@
-# Coir Ledger — PRD
+# SVKD COIR — PRD
 
 ## Original Problem Statement
 Build a mobile app to track coir business finances with two main tables:
@@ -22,6 +22,9 @@ Product requirements: device-only storage (no backend), ₹ INR currency, manual
 Small coir business owner/operator recording daily cash movement on a phone; needs quick entry, glanceable net balance, and daily/monthly review.
 
 ## Implemented (2026-06-11)
+- **Renamed** app to "SVKD COIR" (header, PDFs, app.json).
+- **Part-payments / Payment History**: income now stores a payments[] array; tapping the income status badge opens a Payment modal (Total/Paid/Due) to record part-payments (date + amount) that reduce the due, plus "Settle full due" and a deletable history. Badge reads PAID / PART PAID / PENDING from remaining due; outstanding pill, reminders, and customer dues all use remaining due.
+- **Product Insights**: Coir Pith vs Coir Bale income card with bar + top earner, in Calendar Month view ("This month") and Year view (the year).
 - **Income auto-amount**: Tons × Cost per ton auto-computes the amount, with a toggle to enter it manually.
 - **Custom cross-platform date picker**: in-app calendar (DatePickerModal) replaces the native picker so date editing works in every category on web + native; also powers the From/To filters.
 - **Customer Statements**: Settings → Customer statements lists each customer with totals and outstanding dues, and generates a per-customer PDF statement.
