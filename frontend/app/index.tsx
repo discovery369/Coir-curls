@@ -1,25 +1,36 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import * as Clipboard from "expo-clipboard";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { useEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 type Payment = { id: string; date: string; amount: number };
-type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[] };
+type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; phone?: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[] };
 type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number };
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
+type Backup = { id: string; createdAt: string; incomes: Income[]; expenses: Expense[] };
 
 const C = { canvas: "#F5F0E7", surface: "#FFFDF8", ink: "#1F2924", muted: "#59635C", line: "#D8D1C4", forest: "#173C2C", income: "#2F7D57", expense: "#B65A43", action: "#C76B35", highlight: "#E8D5A7", nav: "#203029" };
 const STORAGE_KEY = "coir-ledger-records-v1";
+const BACKUPS_KEY = "svkd-coir-backups-v1";
 const TONS_PER_TRIP = 4; // each husk load ~4 tons -> 1 ton coir + 3 ton pith
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const money = (v: number) => `₹${new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)}`;
 const displayDate = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
+const displayDateTime = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
+const waDigits = (raw?: string) => { const d = (raw || "").replace(/\D/g, ""); return d ? (d.length === 10 ? `91${d}` : d) : ""; };
+const openWhatsApp = async (message: string, phone?: string) => {
+  const text = encodeURIComponent(message);
+  const num = waDigits(phone);
+  const primary = num ? `https://wa.me/${num}?text=${text}` : (Platform.OS === "web" ? `https://wa.me/?text=${text}` : `whatsapp://send?text=${text}`);
+  try { await Linking.openURL(primary); } catch { try { await Linking.openURL(`https://wa.me/?text=${text}`); } catch { /* whatsapp unavailable */ } }
+};
+const waStatement = (name: string, total: number, paid: number, due: number) => `Hello ${name || "there"},\n\nStatement from SVKD COIR:\nTotal purchased: ${money(total)}\nPaid: ${money(paid)}\nBalance due: ${money(due)}\n\nThank you for your business.`;
+const waReminder = (name: string, due: number, days: number) => `Hello ${name || "there"},\n\nGentle reminder from SVKD COIR: ${money(due)} is pending${days ? ` (${days} days)` : ""}. Kindly arrange payment at your convenience.\n\nThank you.`;
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 const paidSum = (r: Income) => (r.payments || []).reduce((sum, p) => sum + p.amount, 0);
@@ -39,6 +50,7 @@ const sanitizeIncome = (r: Record<string, unknown>): Income => ({
   amount: toNum(r.amount),
   name: toStr(r.name),
   address: toStr(r.address),
+  phone: toStr(r.phone),
   status: r.status === "pending" ? "pending" : "paid",
   tons: toNum(r.tons),
   costPerTon: toNum(r.costPerTon),
@@ -74,6 +86,13 @@ export default function Index() {
   const [showCustomers, setShowCustomers] = useState(false);
   const [paying, setPaying] = useState<string | null>(null);
   const [overdueDays, setOverdueDays] = useState(15);
+  const [showBackups, setShowBackups] = useState(false);
+  const [backups, setBackups] = useState<Backup[]>([]);
+  const [backupsReady, setBackupsReady] = useState(false);
+  const [showVendors, setShowVendors] = useState(false);
+  const nameOptions = useMemo(() => Array.from(new Set(incomes.map((i) => i.name).filter(Boolean))), [incomes]);
+  const addressOptions = useMemo(() => Array.from(new Set(incomes.map((i) => i.address).filter(Boolean))), [incomes]);
+  const expenseNameOptions = useMemo(() => Array.from(new Set(expenses.map((e) => e.description).filter(Boolean))), [expenses]);
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY).then((raw) => {
@@ -83,6 +102,9 @@ export default function Index() {
   }, []);
 
   useEffect(() => { if (ready) AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ incomes, expenses })); }, [incomes, expenses, ready]);
+
+  useEffect(() => { AsyncStorage.getItem(BACKUPS_KEY).then((raw) => { if (raw) setBackups(JSON.parse(raw)); setBackupsReady(true); }); }, []);
+  useEffect(() => { if (backupsReady) AsyncStorage.setItem(BACKUPS_KEY, JSON.stringify(backups)); }, [backups, backupsReady]);
 
   const totalIncome = useMemo(() => incomes.reduce((sum, row) => sum + row.amount, 0), [incomes]);
   const totalExpenses = useMemo(() => expenses.reduce((sum, row) => sum + row.amount + (row.repairAmount || 0), 0), [expenses]);
@@ -101,6 +123,9 @@ export default function Index() {
     const payments = due > 0 ? [...(row.payments || []), { id: String(Date.now()), date: new Date().toISOString(), amount: due }] : (row.payments || []);
     return { ...row, payments, status: "paid" as const };
   }));
+  const createBackup = () => setBackups((prev) => [{ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, createdAt: new Date().toISOString(), incomes, expenses }, ...prev].slice(0, 30));
+  const deleteBackup = (id: string) => setBackups((prev) => prev.filter((b) => b.id !== id));
+  const restoreBackup = (b: Backup) => { setIncomes(b.incomes); setExpenses(b.expenses); setShowBackups(false); };
   const open = (kind: "income" | "expense", id?: string) => setEditing({ kind, id });
   const payingRecord = incomes.find((row) => row.id === paying) || null;
   const title = tab === "settings" ? "Settings" : tab === "calendar" ? "Calendar" : tab === "income" ? "Income" : tab === "expenses" ? "Expenses" : "Overview";
@@ -122,6 +147,8 @@ export default function Index() {
             incomes={incomes}
             expenses={expenses}
             onOpenCustomers={() => setShowCustomers(true)}
+            onOpenBackups={() => setShowBackups(true)}
+            onOpenVendors={() => setShowVendors(true)}
             onRestore={(inc, exp) => { setIncomes(inc); setExpenses(exp); }}
             requestConfirm={setConfirm}
             onClear={() => setConfirm({ title: "Clear all records?", message: "This cannot be undone.", confirmLabel: "Clear all", onConfirm: () => { setIncomes([]); setExpenses([]); } })}
@@ -194,6 +221,9 @@ export default function Index() {
       {editing && (
         <RecordForm
           kind={editing.kind}
+          suggestNames={nameOptions}
+          suggestAddresses={addressOptions}
+          suggestExpenseNames={expenseNameOptions}
           record={(editing.kind === "income" ? incomes : expenses).find((row) => row.id === editing.id)}
           onClose={() => setEditing(null)}
           onSave={(record) => {
@@ -205,6 +235,8 @@ export default function Index() {
       )}
 
       {showReminders && <RemindersModal incomes={incomes} overdueDays={overdueDays} setOverdueDays={setOverdueDays} onSettle={settleIncome} onOpenPayment={(id) => { setShowReminders(false); setPaying(id); }} onClose={() => setShowReminders(false)} />}
+      {showBackups && <LocalBackupsModal backups={backups} onCreate={createBackup} onRestore={restoreBackup} onDelete={deleteBackup} requestConfirm={setConfirm} onClose={() => setShowBackups(false)} />}
+      {showVendors && <VendorsModal incomes={incomes} expenses={expenses} onClose={() => setShowVendors(false)} />}
       {showCustomers && <CustomersModal incomes={incomes} onClose={() => setShowCustomers(false)} />}
       {payingRecord && <PaymentModal record={payingRecord} onChange={updateIncome} onClose={() => setPaying(null)} />}
 
@@ -279,6 +311,27 @@ function ActionButton({ label, color, onPress, testID }: { label: string; color:
       <MaterialCommunityIcons name="plus" size={19} color="#fff" />
       <Text style={s.fabText}>{label}</Text>
     </Pressable>
+  );
+}
+
+function SuggestInput({ testID, value, onChangeText, placeholder, suggestions }: { testID: string; value: string; onChangeText: (v: string) => void; placeholder: string; suggestions: string[] }) {
+  const [focused, setFocused] = useState(false);
+  const q = value.trim().toLowerCase();
+  const matches = focused ? suggestions.filter((sug) => sug && sug.toLowerCase().includes(q) && sug.toLowerCase() !== q).slice(0, 5) : [];
+  return (
+    <View>
+      <TextInput testID={testID} value={value} onChangeText={onChangeText} onFocus={() => setFocused(true)} onBlur={() => setTimeout(() => setFocused(false), 180)} placeholder={placeholder} placeholderTextColor="#9DA49D" style={s.textInputBox} />
+      {matches.length > 0 && (
+        <View testID={`${testID}-suggestions`} style={s.suggestBox}>
+          {matches.map((m) => (
+            <Pressable key={m} testID={`suggest-option`} onPress={() => { onChangeText(m); setFocused(false); }} style={s.suggestItem}>
+              <MaterialCommunityIcons name="history" size={15} color={C.muted} />
+              <Text style={s.suggestText} numberOfLines={1}>{m}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -400,12 +453,13 @@ function describeRow(row: Income | Expense) {
   return `${row.category}${row.description ? ` · ${row.description}` : ""}`;
 }
 
-function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expense"; record?: Income | Expense; onClose: () => void; onSave: (record: Income | Expense) => void }) {
+function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddresses, suggestExpenseNames }: { kind: "income" | "expense"; record?: Income | Expense; onClose: () => void; onSave: (record: Income | Expense) => void; suggestNames: string[]; suggestAddresses: string[]; suggestExpenseNames: string[] }) {
   const [date, setDate] = useState(record ? new Date(record.date) : new Date());
   const [amount, setAmount] = useState(record ? String(record.amount) : "");
   const [choice, setChoice] = useState<string>(record ? ("product" in record ? record.product : record.category) : kind === "income" ? "Coir Pith" : "Salaries");
   const [name, setName] = useState(record && "name" in record ? record.name : "");
   const [address, setAddress] = useState(record && "address" in record ? record.address : "");
+  const [phone, setPhone] = useState(record && "phone" in record && record.phone ? record.phone : "");
   const [status, setStatus] = useState<"paid" | "pending">(record && "status" in record && record.status ? record.status : "paid");
   const [tons, setTons] = useState(record && "tons" in record && record.tons ? String(record.tons) : "");
   const [incomeCost, setIncomeCost] = useState(record && "product" in record && record.costPerTon ? String(record.costPerTon) : "");
@@ -437,7 +491,7 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
     if (!amount || !Number.isFinite(value) || value <= 0) return setError("Amount must be greater than ₹0");
     const base = { id: record?.id || String(Date.now()), date: date.toISOString(), amount: value };
     onSave(kind === "income"
-      ? { ...base, product: choice as Income["product"], name: name.trim(), address: address.trim(), status, tons: Number(tons) || 0, costPerTon: Number(incomeCost) || 0 }
+      ? { ...base, product: choice as Income["product"], name: name.trim(), address: address.trim(), phone: phone.trim(), status, tons: Number(tons) || 0, costPerTon: Number(incomeCost) || 0 }
       : {
           ...base,
           category: choice as Expense["category"],
@@ -500,9 +554,11 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
                 </View>
               </View>
               <Text style={s.inputLabel}>NAME</Text>
-              <TextInput testID="record-name-input" value={name} onChangeText={setName} placeholder="Customer or buyer name" placeholderTextColor="#9DA49D" style={s.textInputBox} />
+              <SuggestInput testID="record-name-input" value={name} onChangeText={setName} placeholder="Customer or buyer name" suggestions={suggestNames} />
               <Text style={s.inputLabel}>ADDRESS</Text>
-              <TextInput testID="record-address-input" value={address} onChangeText={setAddress} placeholder="Customer address" placeholderTextColor="#9DA49D" style={s.textInputBox} />
+              <SuggestInput testID="record-address-input" value={address} onChangeText={setAddress} placeholder="Customer address" suggestions={suggestAddresses} />
+              <Text style={s.inputLabel}>PHONE (FOR WHATSAPP)</Text>
+              <TextInput testID="record-phone-input" value={phone} onChangeText={setPhone} placeholder="e.g. 98765 43210" placeholderTextColor="#9DA49D" keyboardType="phone-pad" style={s.textInputBox} />
               <Text style={s.inputLabel}>PAYMENT STATUS</Text>
               <View style={s.options}>
                 {(["paid", "pending"] as const).map((st) => (
@@ -516,7 +572,7 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
           ) : (
             <>
               <Text style={s.inputLabel}>{choice === "Maintenance" ? "DESCRIPTION" : "NAME"}</Text>
-              <TextInput testID="record-description-input" value={description} onChangeText={setDescription} placeholder={choice === "Maintenance" ? "What was repaired?" : choice === "Husk" ? "Supplier / batch name" : choice === "Current bill" ? "Bill name / provider" : "Employee name"} placeholderTextColor="#9DA49D" style={s.textInputBox} />
+              <SuggestInput testID="record-description-input" value={description} onChangeText={setDescription} placeholder={choice === "Maintenance" ? "What was repaired?" : choice === "Husk" ? "Supplier / batch name" : choice === "Current bill" ? "Bill name / provider" : "Employee name"} suggestions={suggestExpenseNames} />
               {isHusk && (
                 <>
                   <Text style={s.inputLabel}>NUMBER OF TRIPS</Text>
@@ -794,21 +850,21 @@ function RemindersModal({ incomes, overdueDays, setOverdueDays, onSettle, onOpen
           <ScrollView testID="reminders-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
             <Text style={s.detailSectionLabel}>OLDER THAN</Text>
             <View style={s.reminderChips}>
-              {[7, 15, 30, 60].map((n) => (
+              {[0, 7, 15, 30, 60].map((n) => (
                 <Pressable key={n} testID={`reminder-days-${n}`} onPress={() => setOverdueDays(n)} style={[s.chip, overdueDays === n && s.chipSelected]}>
-                  <Text style={[s.chipText, overdueDays === n && s.chipTextSelected]}>{n} days</Text>
+                  <Text style={[s.chipText, overdueDays === n && s.chipTextSelected]}>{n === 0 ? "All" : `${n} days`}</Text>
                 </Pressable>
               ))}
             </View>
             <View style={s.reminderTotal}>
-              <Text style={s.reminderTotalLabel}>{overdue.length} overdue · beyond {overdueDays} days</Text>
+              <Text style={s.reminderTotalLabel}>{overdue.length} pending{overdueDays ? ` · beyond ${overdueDays} days` : ""}</Text>
               <Text style={s.reminderTotalAmt}>{money(totalOverdue)}</Text>
             </View>
             {overdue.length === 0 ? (
               <View style={s.empty}>
                 <MaterialCommunityIcons name="check-circle-outline" size={30} color={C.income} />
                 <Text style={s.emptyTitle}>Nothing overdue</Text>
-                <Text style={s.emptyCopy}>No dues older than {overdueDays} days.</Text>
+                <Text style={s.emptyCopy}>{overdueDays ? `No dues older than ${overdueDays} days.` : "No pending dues right now."}</Text>
               </View>
             ) : overdue.map(({ r, days }) => (
               <View key={r.id} testID="reminder-row" style={s.detailRow}>
@@ -817,7 +873,7 @@ function RemindersModal({ incomes, overdueDays, setOverdueDays, onSettle, onOpen
                   <Text style={s.reminderMeta}>{r.product} · {days} days overdue · due {money(dueOf(r))}</Text>
                 </Pressable>
                 <View style={s.reminderRight}>
-                  <Pressable testID="reminder-record-payment" hitSlop={8} onPress={() => onOpenPayment(r.id)} style={s.recordBtn}><Text style={s.recordBtnText}>Record</Text></Pressable>
+                  <Pressable testID="reminder-whatsapp" hitSlop={8} onPress={() => openWhatsApp(waReminder(r.name, dueOf(r), days), r.phone)} style={s.waSmall}><MaterialCommunityIcons name="whatsapp" size={13} color="#fff" /><Text style={s.waSmallText}>Remind</Text></Pressable>
                   <Pressable testID="reminder-mark-paid" hitSlop={8} onPress={() => onSettle(r.id)} style={s.markPaid}><Text style={s.markPaidText}>Mark paid</Text></Pressable>
                 </View>
               </View>
@@ -832,11 +888,12 @@ function RemindersModal({ incomes, overdueDays, setOverdueDays, onSettle, onOpen
 
 function CustomersModal({ incomes, onClose }: { incomes: Income[]; onClose: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
-  const map = new Map<string, { name: string; total: number; pending: number; count: number; records: Income[] }>();
+  const map = new Map<string, { name: string; phone: string; total: number; pending: number; count: number; records: Income[] }>();
   incomes.forEach((r) => {
     const key = (r.name || "").trim() || "Unnamed customer";
-    const cur = map.get(key) || { name: key, total: 0, pending: 0, count: 0, records: [] };
+    const cur = map.get(key) || { name: key, phone: "", total: 0, pending: 0, count: 0, records: [] };
     cur.total += r.amount; cur.pending += dueOf(r); cur.count += 1; cur.records.push(r);
+    if (!cur.phone && r.phone) cur.phone = r.phone;
     map.set(key, cur);
   });
   const customers = [...map.values()].sort((a, b) => b.pending - a.pending || b.total - a.total);
@@ -883,6 +940,10 @@ function CustomersModal({ incomes, onClose }: { incomes: Income[]; onClose: () =
                   <MaterialCommunityIcons name="file-pdf-box" size={16} color={C.forest} />
                   <Text style={s.statementBtnText}>{busy === c.name ? "Preparing…" : "Send statement (PDF)"}</Text>
                 </Pressable>
+                <Pressable testID="customer-whatsapp-button" onPress={() => openWhatsApp(waStatement(c.name, c.total, c.total - c.pending, c.pending), c.phone)} style={s.waBtn}>
+                  <MaterialCommunityIcons name="whatsapp" size={16} color="#fff" />
+                  <Text style={s.waBtnText}>Send on WhatsApp</Text>
+                </Pressable>
               </View>
             ))}
             <View style={{ height: 30 }} />
@@ -893,23 +954,8 @@ function CustomersModal({ incomes, onClose }: { incomes: Income[]; onClose: () =
   );
 }
 
-function Settings({ incomes, expenses, onClear, onOpenCustomers, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onRestore: (inc: Income[], exp: Expense[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
+function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, onOpenVendors, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onOpenBackups: () => void; onOpenVendors: () => void; onRestore: (inc: Income[], exp: Expense[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
   const [notice, setNotice] = useState("");
-
-  const doBackup = async () => {
-    const payload = JSON.stringify({ app: "coir-ledger", version: 1, exportedAt: new Date().toISOString(), incomes, expenses }, null, 2);
-    try {
-      if (Platform.OS === "web") {
-        await Clipboard.setStringAsync(payload);
-        setNotice("Backup copied to clipboard. Paste and save it somewhere safe.");
-      } else {
-        const uri = FileSystem.documentDirectory + `coir-ledger-backup-${new Date().toISOString().slice(0, 10)}.json`;
-        await FileSystem.writeAsStringAsync(uri, payload);
-        if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/json", dialogTitle: "SVKD COIR backup" });
-        else { await Clipboard.setStringAsync(payload); setNotice("Backup copied to clipboard."); }
-      }
-    } catch { setNotice("Could not create backup."); }
-  };
 
   const doRestore = async () => {
     try {
@@ -937,9 +983,14 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onRestore, requ
         <View style={s.settingCopy}><Text style={s.settingTitle}>Customer statements</Text><Text style={s.settingSub}>See orders and dues per customer, and send a PDF statement.</Text></View>
         <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
       </Pressable>
-      <Pressable testID="backup-button" style={s.settingRow} onPress={doBackup}>
-        <MaterialCommunityIcons name="cloud-upload-outline" size={22} color={C.forest} />
-        <View style={s.settingCopy}><Text style={s.settingTitle}>Back up data</Text><Text style={s.settingSub}>Save a copy of all records to a file you can keep or move to a new phone.</Text></View>
+      <Pressable testID="open-vendors-button" style={s.settingRow} onPress={onOpenVendors}>
+        <MaterialCommunityIcons name="swap-horizontal" size={22} color={C.forest} />
+        <View style={s.settingCopy}><Text style={s.settingTitle}>Vendors &amp; totals</Text><Text style={s.settingSub}>Total income and expenses per person or vendor.</Text></View>
+        <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
+      </Pressable>
+      <Pressable testID="open-backups-button" style={s.settingRow} onPress={onOpenBackups}>
+        <MaterialCommunityIcons name="content-save-outline" size={22} color={C.forest} />
+        <View style={s.settingCopy}><Text style={s.settingTitle}>Local backups</Text><Text style={s.settingSub}>Save and restore snapshots kept on this device.</Text></View>
         <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
       </Pressable>
       <Pressable testID="restore-button" style={s.settingRow} onPress={doRestore}>
@@ -1063,6 +1114,100 @@ function ProductInsights({ incomes, scope }: { incomes: Income[]; scope: string 
         </View>
       ))}
     </View>
+  );
+}
+
+function LocalBackupsModal({ backups, onCreate, onRestore, onDelete, requestConfirm, onClose }: { backups: Backup[]; onCreate: () => void; onRestore: (b: Backup) => void; onDelete: (id: string) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void; onClose: () => void }) {
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <View style={s.modalWrap}>
+        <View style={s.sheet}>
+          <View style={s.sheetHandle} />
+          <View style={[s.formHead, s.detailHeaderPad]}>
+            <View>
+              <Text style={s.detailOverline}>ON THIS DEVICE</Text>
+              <Text style={s.formTitle}>Local backups</Text>
+            </View>
+            <Pressable testID="backups-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
+          </View>
+          <ScrollView testID="local-backups-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
+            <Pressable testID="create-backup-button" onPress={onCreate} style={s.createBackupBtn}>
+              <MaterialCommunityIcons name="content-save-outline" size={18} color="#fff" />
+              <Text style={s.saveText}>Back up now</Text>
+            </Pressable>
+            <Text style={s.detailSectionLabel}>SAVED BACKUPS</Text>
+            {backups.length === 0 ? (
+              <View style={s.empty}>
+                <MaterialCommunityIcons name="database-outline" size={30} color={C.action} />
+                <Text style={s.emptyTitle}>No local backups yet</Text>
+                <Text style={s.emptyCopy}>Tap “Back up now” to save a snapshot on this device.</Text>
+              </View>
+            ) : backups.map((b) => (
+              <View key={b.id} testID="local-backup-row" style={s.detailRow}>
+                <View style={s.detailRowMain}>
+                  <Text style={s.detailRowTitle}>{displayDateTime(b.createdAt)}</Text>
+                  <Text style={s.reminderMeta}>{b.incomes.length} income · {b.expenses.length} expense</Text>
+                </View>
+                <View style={s.reminderRight}>
+                  <Pressable testID="backup-restore-button" hitSlop={8} onPress={() => requestConfirm({ title: "Restore this backup?", message: `Replaces current data with ${b.incomes.length} income and ${b.expenses.length} expense records.`, confirmLabel: "Restore", onConfirm: () => onRestore(b) })} style={s.recordBtn}><Text style={s.recordBtnText}>Restore</Text></Pressable>
+                  <Pressable testID="backup-delete-button" hitSlop={8} onPress={() => onDelete(b.id)}><MaterialCommunityIcons name="trash-can-outline" size={18} color={C.expense} /></Pressable>
+                </View>
+              </View>
+            ))}
+            <View style={{ height: 30 }} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expenses: Expense[]; onClose: () => void }) {
+  const map = new Map<string, { name: string; income: number; expense: number }>();
+  const bump = (rawName: string, incAmt: number, expAmt: number) => {
+    const key = (rawName || "").trim() || "Unnamed";
+    const cur = map.get(key) || { name: key, income: 0, expense: 0 };
+    cur.income += incAmt; cur.expense += expAmt; map.set(key, cur);
+  };
+  incomes.forEach((r) => bump(r.name, r.amount, 0));
+  expenses.forEach((r) => bump(r.description, 0, r.amount + (r.repairAmount || 0)));
+  const vendors = [...map.values()].sort((a, b) => (b.income + b.expense) - (a.income + a.expense));
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <View style={s.modalWrap}>
+        <View style={s.sheet}>
+          <View style={s.sheetHandle} />
+          <View style={[s.formHead, s.detailHeaderPad]}>
+            <View>
+              <Text style={s.detailOverline}>TRANSACTION TOTALS</Text>
+              <Text style={s.formTitle}>Vendors</Text>
+            </View>
+            <Pressable testID="vendors-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
+          </View>
+          <ScrollView testID="vendors-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
+            {vendors.length === 0 ? (
+              <View style={s.empty}>
+                <MaterialCommunityIcons name="account-search-outline" size={30} color={C.action} />
+                <Text style={s.emptyTitle}>No vendors yet</Text>
+                <Text style={s.emptyCopy}>Add income or expenses with a name to see totals.</Text>
+              </View>
+            ) : vendors.map((v) => (
+              <View key={v.name} testID="vendor-row" style={s.vendorRow}>
+                <View style={s.detailRowMain}>
+                  <Text style={s.detailRowTitle}>{v.name}</Text>
+                  <Text style={s.reminderMeta}>Net {money(v.income - v.expense)}</Text>
+                </View>
+                <View style={s.vendorTotals}>
+                  <Text style={s.vendorIncome} testID="vendor-income">+ {money(v.income)}</Text>
+                  <Text style={s.vendorExpense} testID="vendor-expense">− {money(v.expense)}</Text>
+                </View>
+              </View>
+            ))}
+            <View style={{ height: 30 }} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -1299,6 +1444,18 @@ const s = StyleSheet.create({
   confirmDanger: { flex: 1.4, minHeight: 50, backgroundColor: C.expense, alignItems: "center", justifyContent: "center", borderRadius: 8 },
   recordBtn: { borderWidth: 1, borderColor: C.forest, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
   recordBtnText: { color: C.forest, fontSize: 12, fontWeight: "800" },
+  createBackupBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, minHeight: 48, borderRadius: 8, backgroundColor: C.forest, marginTop: 4 },
+  waBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 8, minHeight: 44, borderRadius: 8, backgroundColor: "#128C7E" },
+  waBtnText: { color: "#fff", fontSize: 13, fontWeight: "800" },
+  waSmall: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "#128C7E", borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
+  waSmallText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  suggestBox: { borderWidth: 1, borderTopWidth: 0, borderColor: C.line, backgroundColor: C.surface, marginTop: -1 },
+  suggestItem: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 42, paddingHorizontal: 12, borderTopWidth: 1, borderTopColor: "#EDE6D8" },
+  suggestText: { flex: 1, color: C.ink, fontSize: 14 },
+  vendorRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.line, gap: 10 },
+  vendorTotals: { alignItems: "flex-end", gap: 3 },
+  vendorIncome: { color: C.income, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 13, fontWeight: "800" },
+  vendorExpense: { color: C.expense, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 13, fontWeight: "800" },
   payRow: { flexDirection: "row", gap: 8, marginTop: 8 },
   payAdd: { minWidth: 72, paddingHorizontal: 16, backgroundColor: C.forest, alignItems: "center", justifyContent: "center", borderRadius: 4 },
   settleBtn: { marginTop: 10, minHeight: 44, borderRadius: 8, borderWidth: 1, borderColor: C.forest, alignItems: "center", justifyContent: "center" },
