@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only retest at 390x844. Modal save is now reachable — the previous save-button-out-of-viewport bug is FIXED. Income & Expense (Salaries, Maintenance, Husk) save correctly, amount validation shows the required error, Husk auto amount (costPerTon * trips * loadWeight) computes to 4000.00, husk-production-summary renders, manual amount toggle works, dashboard totals & net balance update in real time, ledger segmented tabs filter tables correctly, Calendar month summary + day row + prev/next month navigation work, Edit updates existing record, and AsyncStorage persists totals across reload. TWO REMAINING BUGS: (1) record-delete-button does not delete the row, (2) clear-all-records-button does not clear records. Both use React Native Alert.alert with buttons, which is a no-op on react-native-web (only window.alert is invoked, button onPress callbacks never fire). This blocks delete + clear-all flows on the web preview and would also be surprising to any user who runs the app in a browser.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "record-delete-button (Ledger row)", "issue": "On web, Alert.alert with Cancel/Delete buttons never fires onPress -> deleting a row does nothing. Reference: /app/frontend/app/index.tsx:35-38", "testID": "record-delete-button", "priority": "HIGH"},
+      {"component": "clear-all-records-button (Settings)", "issue": "On web, Alert.alert with Cancel/Clear all buttons never fires onPress -> Clear all does nothing. Reference: /app/frontend/app/index.tsx:55-58", "testID": "clear-all-records-button", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Delete record + Clear all records", "issue": "React Native Alert.alert callbacks are not invoked on react-native-web. Need a Platform.OS === 'web' branch that uses window.confirm(), or a custom in-app Modal confirmation so destructive actions work in the web preview / any browser build.", "affected_testIDs": ["record-delete-button", "clear-all-records-button"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Alert.alert web compatibility", "issue": "Alert.alert with buttons is not supported on react-native-web (buttons/callbacks ignored). Use Platform.OS === 'web' ? window.confirm(...) : Alert.alert(...) or an in-app confirm modal. Reference: /app/frontend/app/index.tsx:35-38 and /app/frontend/app/index.tsx:55-58"}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_3.json", "/app/test_reports/ui/it3_home.jpeg", "/app/test_reports/ui/it3_income_form.jpeg", "/app/test_reports/ui/it3_calendar.jpeg"],
+  "action_items": [
+    "Replace Alert.alert-based confirmations for delete and clear-all with a Platform-aware confirm: on web use window.confirm() (or a custom Modal) so onPress callbacks actually execute; keep Alert.alert for native. This unblocks record-delete-button and clear-all-records-button on the web preview."
+  ],
+  "critical_code_review_comments": [
+    "index.tsx is ~500 lines and still fits in one file, but is trending toward the 700-line threshold — consider splitting RecordForm, CalendarView, Ledger, Settings into separate files under /app/frontend/app/components/ for maintainability.",
+    "Type Expense has both `loads` and `trips` fields set to the same value on save (index.tsx:212-213). Consider consolidating to a single `trips` field to avoid drift.",
+    "displayDate uses new Date(value) directly with the stored ISO string; safe here but note it will localize to the device timezone which for pure calendar dates could shift the day near midnight."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only request)", "frontend": "85% (11 of 13 flows pass; delete + clear-all fail on web due to Alert.alert)"},
+  "seed_data_creation": "Created and left one Income (Coir Bale, TEST Buyer, ₹7,500.00 after edit) and three Expenses (Salaries ₹1,000, Maintenance ₹250, Husk ₹4,500 manual override) — these persisted across reload. Clear-all did NOT remove them on web, so records may still be in AsyncStorage.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public preview: https://profit-calculator-111.preview.emergentagent.com. Viewport 390x844. Add-income/add-expense save flow, amount validation ('Amount must be greater than ₹0'), Husk auto amount = costPerTon*trips*loadWeight = 500*2*4 = 4000.00, husk-production-summary, ledger-tab filtering, bottom-nav navigation, calendar prev/next month, edit, and AsyncStorage persistence all verified. Only outstanding items: delete + clear-all rely on Alert.alert buttons which do not fire on web. Once the main agent switches to window.confirm on web (or a custom modal), rerun delete + clear-all only; everything else is green.",
+  "rca_of_issue": "Reproduction: (1) Add any record. (2) Tap record-delete-button. On web, Alert.alert renders window.alert with the message only; the Cancel/Delete buttons and their onPress handlers are silently dropped by react-native-web. Same path for Settings > Clear all. Mitigation: wrap the confirm in a Platform check — const confirm = Platform.OS === 'web' ? window.confirm(msg) : await new Promise(r => Alert.alert(title, msg, [{text:'Cancel', onPress:()=>r(false), style:'cancel'},{text:'Delete', style:'destructive', onPress:()=>r(true)}])); if (confirm) { ...delete... }"
+}
