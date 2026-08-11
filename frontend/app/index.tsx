@@ -1,23 +1,29 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import DateTimePicker from "@react-native-community/datetimepicker";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
+import * as DocumentPicker from "expo-document-picker";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { useEffect, useMemo, useState } from "react";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
-type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; status?: "paid" | "pending" };
+type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number };
 type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number };
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
 
 const C = { canvas: "#F5F0E7", surface: "#FFFDF8", ink: "#1F2924", muted: "#59635C", line: "#D8D1C4", forest: "#173C2C", income: "#2F7D57", expense: "#B65A43", action: "#C76B35", highlight: "#E8D5A7", nav: "#203029" };
 const STORAGE_KEY = "coir-ledger-records-v1";
 const TONS_PER_TRIP = 4; // each husk load ~4 tons -> 1 ton coir + 3 ton pith
+const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const money = (v: number) => `₹${new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)}`;
 const displayDate = (value: string) => new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(value));
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 const isPending = (r: Income) => r.status === "pending";
+const isSameDay = (a: Date | null, b: Date) => !!a && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const daysSince = (iso: string) => Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(iso)).getTime()) / 86400000);
 
 export default function Index() {
   const [incomes, setIncomes] = useState<Income[]>([]);
@@ -29,6 +35,9 @@ export default function Index() {
   const [query, setQuery] = useState("");
   const [dateFrom, setDateFrom] = useState<Date | null>(null);
   const [dateTo, setDateTo] = useState<Date | null>(null);
+  const [showReminders, setShowReminders] = useState(false);
+  const [showCustomers, setShowCustomers] = useState(false);
+  const [overdueDays, setOverdueDays] = useState(15);
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY).then((raw) => {
@@ -66,12 +75,14 @@ export default function Index() {
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <Text style={s.overline}>{title.toUpperCase()}</Text>
         {tab === "settings" ? (
-          <Settings onClear={() => setConfirm({
-            title: "Clear all records?",
-            message: "This cannot be undone.",
-            confirmLabel: "Clear all",
-            onConfirm: () => { setIncomes([]); setExpenses([]); },
-          })} />
+          <Settings
+            incomes={incomes}
+            expenses={expenses}
+            onOpenCustomers={() => setShowCustomers(true)}
+            onRestore={(inc, exp) => { setIncomes(inc); setExpenses(exp); }}
+            requestConfirm={setConfirm}
+            onClear={() => setConfirm({ title: "Clear all records?", message: "This cannot be undone.", confirmLabel: "Clear all", onConfirm: () => { setIncomes([]); setExpenses([]); } })}
+          />
         ) : tab === "calendar" ? (
           <CalendarView incomes={incomes} expenses={expenses} />
         ) : (
@@ -92,9 +103,9 @@ export default function Index() {
             </View>
 
             {outstanding > 0 && (
-              <Pressable testID="outstanding-pill" onPress={() => setTab("income")} style={s.outstandingPill}>
+              <Pressable testID="outstanding-pill" onPress={() => setShowReminders(true)} style={s.outstandingPill}>
                 <MaterialCommunityIcons name="clock-alert-outline" size={17} color={C.action} />
-                <Text style={s.outstandingText}><Text style={s.outstandingStrong}>{money(outstanding)}</Text> pending from customers</Text>
+                <Text style={s.outstandingText}><Text style={s.outstandingStrong}>{money(outstanding)}</Text> pending · tap to view reminders</Text>
                 <MaterialCommunityIcons name="chevron-right" size={18} color={C.action} />
               </Pressable>
             )}
@@ -150,6 +161,9 @@ export default function Index() {
         />
       )}
 
+      {showReminders && <RemindersModal incomes={incomes} overdueDays={overdueDays} setOverdueDays={setOverdueDays} onMarkPaid={toggleStatus} onClose={() => setShowReminders(false)} />}
+      {showCustomers && <CustomersModal incomes={incomes} onClose={() => setShowCustomers(false)} />}
+
       {confirm && (
         <ConfirmModal
           title={confirm.title}
@@ -173,6 +187,41 @@ function ConfirmModal({ title, message, confirmLabel, onCancel, onConfirm }: { t
           <View style={s.confirmButtons}>
             <Pressable testID="confirm-cancel-button" onPress={onCancel} style={s.cancel}><Text style={s.cancelText}>Cancel</Text></Pressable>
             <Pressable testID="confirm-delete-button" onPress={onConfirm} style={s.confirmDanger}><Text style={s.saveText}>{confirmLabel}</Text></Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function DatePickerModal({ value, title, onSelect, onClose }: { value: Date | null; title: string; onSelect: (d: Date) => void; onClose: () => void }) {
+  const [view, setView] = useState(value || new Date());
+  const y = view.getFullYear();
+  const m = view.getMonth();
+  const firstDay = new Date(y, m, 1).getDay();
+  const days = new Date(y, m + 1, 0).getDate();
+  const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)];
+  return (
+    <Modal animationType="fade" transparent visible onRequestClose={onClose}>
+      <View style={s.confirmWrap}>
+        <View testID="date-picker-modal" style={s.datePickerCard}>
+          <Text style={s.dpHeading}>{title}</Text>
+          <View style={s.dpHead}>
+            <Pressable testID="dp-prev" hitSlop={8} onPress={() => setView(new Date(y, m - 1, 1))}><MaterialCommunityIcons name="chevron-left" size={24} color={C.forest} /></Pressable>
+            <Text style={s.dpTitle}>{new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" }).format(view)}</Text>
+            <Pressable testID="dp-next" hitSlop={8} onPress={() => setView(new Date(y, m + 1, 1))}><MaterialCommunityIcons name="chevron-right" size={24} color={C.forest} /></Pressable>
+          </View>
+          <View style={s.dpWeekRow}>{WEEKDAYS.map((d, i) => <Text key={i} style={s.dpWeek}>{d}</Text>)}</View>
+          <View style={s.dpGrid}>
+            {cells.map((c, i) => c === null ? <View key={`e${i}`} style={s.dpCell} /> : (
+              <Pressable key={c} testID={`dp-day-${c}`} onPress={() => onSelect(new Date(y, m, c))} style={[s.dpCell, isSameDay(value, new Date(y, m, c)) && s.dpCellSel]}>
+                <Text style={[s.dpDay, isSameDay(value, new Date(y, m, c)) && s.dpDaySel]}>{c}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <View style={s.dpFoot}>
+            <Pressable testID="dp-today" onPress={() => onSelect(new Date())}><Text style={s.todayLink}>Today</Text></Pressable>
+            <Pressable testID="dp-close" onPress={onClose}><Text style={s.dpCloseText}>Close</Text></Pressable>
           </View>
         </View>
       </View>
@@ -210,11 +259,11 @@ function Filters({ query, setQuery, dateFrom, dateTo, setDateFrom, setDateTo }: 
         {(dateFrom || dateTo) ? <Pressable testID="filter-date-clear" onPress={() => { setDateFrom(null); setDateTo(null); }} style={s.dateClear}><Text style={s.dateClearText}>Clear</Text></Pressable> : null}
       </View>
       {picker && (
-        <DateTimePicker
-          value={(picker === "from" ? dateFrom : dateTo) || new Date()}
-          mode="date"
-          display="default"
-          onChange={(_, sel) => { setPicker(null); if (sel) { if (picker === "from") setDateFrom(sel); else setDateTo(sel); } }}
+        <DatePickerModal
+          value={picker === "from" ? dateFrom : dateTo}
+          title={picker === "from" ? "From date" : "To date"}
+          onSelect={(d) => { if (picker === "from") setDateFrom(d); else setDateTo(d); setPicker(null); }}
+          onClose={() => setPicker(null)}
         />
       )}
     </View>
@@ -300,7 +349,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
 }
 
 function describeRow(row: Income | Expense) {
-  if ("product" in row) return `${row.product}${row.name ? ` · ${row.name}` : ""}`;
+  if ("product" in row) return `${row.product}${row.tons && row.costPerTon ? ` · ${row.tons}t @ ₹${row.costPerTon}/t` : ""}${row.name ? ` · ${row.name}` : ""}`;
   if (row.category === "Husk") return `Husk${row.description ? ` · ${row.description}` : ""}${row.trips ? ` · ${row.trips} trip${row.trips === 1 ? "" : "s"} @ ₹${row.costPerTon}/trip` : ""}`;
   return `${row.category}${row.description ? ` · ${row.description}` : ""}`;
 }
@@ -312,16 +361,26 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
   const [name, setName] = useState(record && "name" in record ? record.name : "");
   const [address, setAddress] = useState(record && "address" in record ? record.address : "");
   const [status, setStatus] = useState<"paid" | "pending">(record && "status" in record && record.status ? record.status : "paid");
-  const [costPerTrip, setCostPerTrip] = useState(record && "costPerTon" in record ? String(record.costPerTon || "") : "");
-  const [manualAmount, setManualAmount] = useState(kind !== "expense" || choice !== "Husk");
-  const [totalWeight] = useState(record && "totalWeight" in record ? String(record.totalWeight || "") : "");
+  const [tons, setTons] = useState(record && "tons" in record && record.tons ? String(record.tons) : "");
+  const [incomeCost, setIncomeCost] = useState(record && "product" in record && record.costPerTon ? String(record.costPerTon) : "");
+  const [costPerTrip, setCostPerTrip] = useState(record && "costPerTon" in record && "category" in record ? String(record.costPerTon || "") : "");
   const [description, setDescription] = useState(record && "description" in record ? record.description : "");
   const [trips, setTrips] = useState(record && "trips" in record ? String(record.trips || record.loads || 1) : "1");
+  const [manualAmount, setManualAmount] = useState(() => {
+    if (kind === "expense") return choice !== "Husk";
+    if (record && "tons" in record && record.tons && record.costPerTon) return false;
+    return !!record;
+  });
   const [showDate, setShowDate] = useState(false);
   const [error, setError] = useState("");
   const options = kind === "income" ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Current bill", "Maintenance", "Husk"];
   const isHusk = kind === "expense" && choice === "Husk";
   const tripCount = Math.max(0, Number(trips) || 0);
+  const autoKind = kind === "income" || isHusk;
+
+  useEffect(() => {
+    if (kind === "income" && !manualAmount) setAmount(((Number(tons) || 0) * (Number(incomeCost) || 0)).toFixed(2));
+  }, [kind, manualAmount, tons, incomeCost]);
 
   useEffect(() => {
     if (isHusk && !manualAmount) setAmount(((Number(costPerTrip) || 0) * tripCount).toFixed(2));
@@ -332,7 +391,7 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
     if (!amount || !Number.isFinite(value) || value <= 0) return setError("Amount must be greater than ₹0");
     const base = { id: record?.id || String(Date.now()), date: date.toISOString(), amount: value };
     onSave(kind === "income"
-      ? { ...base, product: choice as Income["product"], name: name.trim(), address: address.trim(), status }
+      ? { ...base, product: choice as Income["product"], name: name.trim(), address: address.trim(), status, tons: Number(tons) || 0, costPerTon: Number(incomeCost) || 0 }
       : {
           ...base,
           category: choice as Expense["category"],
@@ -344,7 +403,7 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
           coirOutput: isHusk ? tripCount * (TONS_PER_TRIP * 0.25) : 0,
           pithOutput: isHusk ? tripCount * (TONS_PER_TRIP * 0.75) : 0,
           costPerTon: Number(costPerTrip) || 0,
-          totalWeight: isHusk ? tripCount * TONS_PER_TRIP : Number(totalWeight) || 0,
+          totalWeight: isHusk ? tripCount * TONS_PER_TRIP : 0,
         });
   };
 
@@ -367,12 +426,12 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
             <Text style={s.inputValue}>{displayDate(date.toISOString())}</Text>
             <MaterialCommunityIcons name="chevron-down" size={20} color={C.muted} />
           </Pressable>
-          {showDate && <DateTimePicker value={date} mode="date" display="default" onChange={(_, selected) => { setShowDate(false); if (selected) setDate(selected); }} />}
+          {showDate && <DatePickerModal value={date} title="Select date" onSelect={(d) => { setDate(d); setShowDate(false); }} onClose={() => setShowDate(false)} />}
 
           <Text style={s.inputLabel}>{kind === "income" ? "PRODUCT" : "CATEGORY"}</Text>
           <View testID="record-type-input" style={s.options}>
             {options.map((option) => (
-              <Pressable key={option} testID={`record-type-${option.replace(/\s+/g, "-").toLowerCase()}`} onPress={() => { setChoice(option); setManualAmount(option !== "Husk"); }} style={[s.option, choice === option && s.optionSelected]}>
+              <Pressable key={option} testID={`record-type-${option.replace(/\s+/g, "-").toLowerCase()}`} onPress={() => { setChoice(option); setManualAmount(kind === "income" ? manualAmount : option !== "Husk"); }} style={[s.option, choice === option && s.optionSelected]}>
                 <Text style={[s.optionText, choice === option && s.optionTextSelected]}>{option}</Text>
                 {choice === option && <MaterialCommunityIcons name="check" size={18} color="#fff" />}
               </Pressable>
@@ -381,6 +440,19 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
 
           {kind === "income" ? (
             <>
+              <View style={s.twoCol}>
+                <View style={s.colItem}>
+                  <Text style={s.inputLabel}>TONS</Text>
+                  <TextInput testID="income-tons-input" value={tons} onChangeText={(t) => { setTons(t); setManualAmount(false); }} placeholder="0" placeholderTextColor="#9DA49D" keyboardType="decimal-pad" style={s.textInputBox} />
+                </View>
+                <View style={s.colItem}>
+                  <Text style={s.inputLabel}>COST PER TON</Text>
+                  <View style={s.amountInput}>
+                    <Text style={s.rupee}>₹</Text>
+                    <TextInput testID="income-cost-per-ton-input" value={incomeCost} onChangeText={(t) => { setIncomeCost(t); setManualAmount(false); }} placeholder="0.00" placeholderTextColor="#9DA49D" keyboardType="decimal-pad" style={s.textInputSmall} />
+                  </View>
+                </View>
+              </View>
               <Text style={s.inputLabel}>NAME</Text>
               <TextInput testID="record-name-input" value={name} onChangeText={setName} placeholder="Customer or buyer name" placeholderTextColor="#9DA49D" style={s.textInputBox} />
               <Text style={s.inputLabel}>ADDRESS</Text>
@@ -414,10 +486,10 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
           )}
 
           <View style={s.amountModeRow}>
-            <Text style={s.inputLabel}>{isHusk && !manualAmount ? "AMOUNT (AUTO)" : "AMOUNT"}</Text>
-            {isHusk && (
-              <Pressable testID="expense-manual-amount-toggle" onPress={() => setManualAmount(!manualAmount)}>
-                <Text style={s.manualToggle}>{manualAmount ? "Use auto amount" : "Enter manually"}</Text>
+            <Text style={s.inputLabel}>{autoKind && !manualAmount ? "AMOUNT (AUTO)" : "AMOUNT"}</Text>
+            {autoKind && (
+              <Pressable testID="amount-mode-toggle" onPress={() => setManualAmount(!manualAmount)}>
+                <Text style={s.manualToggle}>{manualAmount ? (kind === "income" ? "Auto from tons × cost" : "Use auto amount") : "Enter manually"}</Text>
               </Pressable>
             )}
           </View>
@@ -452,7 +524,9 @@ function RecordForm({ kind, record, onClose, onSave }: { kind: "income" | "expen
 }
 
 function CalendarView({ incomes, expenses }: { incomes: Income[]; expenses: Expense[] }) {
+  const [mode, setMode] = useState<"month" | "year">("month");
   const [month, setMonth] = useState(new Date());
+  const [yearRef, setYearRef] = useState(new Date().getFullYear());
   const [selected, setSelected] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const year = month.getFullYear();
@@ -481,62 +555,127 @@ function CalendarView({ incomes, expenses }: { incomes: Income[]; expenses: Expe
     setExporting(true);
     try {
       const html = buildMonthHTML(monthName, monthIncomes, monthExpenses, monthIncome, monthExpense);
-      if (Platform.OS === "web") {
-        await Print.printAsync({ html });
-      } else {
-        const { uri } = await Print.printToFileAsync({ html });
-        if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: `Coir Ledger — ${monthName}`, UTI: "com.adobe.pdf" });
-      }
-    } catch {
-      // silently ignore cancel / unsupported
-    } finally {
-      setExporting(false);
-    }
+      if (Platform.OS === "web") await Print.printAsync({ html });
+      else { const { uri } = await Print.printToFileAsync({ html }); if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: `Coir Ledger — ${monthName}`, UTI: "com.adobe.pdf" }); }
+    } catch { /* cancelled */ } finally { setExporting(false); }
   };
 
   return (
     <View testID="monthly-calendar">
-      <View style={s.calendarHead}>
-        <Pressable testID="calendar-previous-month" onPress={() => setMonth(new Date(year, monthIndex - 1, 1))}><MaterialCommunityIcons name="chevron-left" size={25} color={C.forest} /></Pressable>
-        <Text style={s.calendarTitle}>{monthName}</Text>
-        <Pressable testID="calendar-next-month" onPress={() => setMonth(new Date(year, monthIndex + 1, 1))}><MaterialCommunityIcons name="chevron-right" size={25} color={C.forest} /></Pressable>
-      </View>
-      <View testID="calendar-month-summary" style={s.calendarSummary}>
-        <View><Text style={s.panelLabel}>INCOME</Text><Text style={s.calendarIncome}>{money(monthIncome)}</Text></View>
-        <View><Text style={s.panelLabel}>EXPENSES</Text><Text style={s.calendarExpense}>{money(monthExpense)}</Text></View>
-        <View><Text style={s.panelLabel}>NET</Text><Text style={[s.calendarNet, { color: monthIncome - monthExpense >= 0 ? C.income : C.expense }]}>{money(monthIncome - monthExpense)}</Text></View>
+      <View style={s.modeToggle}>
+        <Pressable testID="calendar-mode-month" onPress={() => setMode("month")} style={[s.modeBtn, mode === "month" && s.modeBtnSel]}><Text style={[s.modeText, mode === "month" && s.modeTextSel]}>Month</Text></Pressable>
+        <Pressable testID="calendar-mode-year" onPress={() => setMode("year")} style={[s.modeBtn, mode === "year" && s.modeBtnSel]}><Text style={[s.modeText, mode === "year" && s.modeTextSel]}>Year</Text></Pressable>
       </View>
 
-      <Pressable testID="export-month-button" onPress={exportPdf} disabled={exporting || rows.length === 0} style={[s.exportButton, (exporting || rows.length === 0) && s.exportDisabled]}>
-        <MaterialCommunityIcons name="file-pdf-box" size={19} color="#fff" />
-        <Text style={s.exportText}>{exporting ? "Preparing…" : `Export ${monthName} as PDF`}</Text>
-      </Pressable>
-
-      <View style={s.calendarLegend}>
-        <Text style={s.legendIncome}>● Income</Text>
-        <Text style={s.legendExpense}>● Expenses</Text>
-        <Text style={s.legendHint}>Tap a day for details</Text>
-      </View>
-
-      {rows.length === 0 ? (
-        <View style={s.empty}>
-          <MaterialCommunityIcons name="calendar-blank-outline" size={30} color={C.action} />
-          <Text style={s.emptyTitle}>No activity this month</Text>
-          <Text style={s.emptyCopy}>Income and expenses will appear here by day.</Text>
-        </View>
-      ) : rows.map((row) => (
-        <Pressable key={row.key} testID="calendar-day-row" onPress={() => setSelected(row.key)} style={s.dayRow}>
-          <View style={s.dayDate}><Text style={s.dayNumber}>{row.date.getDate()}</Text><Text style={s.dayName}>{new Intl.DateTimeFormat("en-IN", { weekday: "short" }).format(row.date)}</Text></View>
-          <View style={s.dayValues}>
-            {row.income ? <Text style={s.dayIncome}>+ {money(row.income)}</Text> : <Text style={s.dayMuted}>—</Text>}
-            {row.expense ? <Text style={s.dayExpense}>− {money(row.expense)}</Text> : <Text style={s.dayMuted}>—</Text>}
+      {mode === "year" ? (
+        <YearOverview incomes={incomes} expenses={expenses} yearRef={yearRef} setYearRef={setYearRef} />
+      ) : (
+        <>
+          <View style={s.calendarHead}>
+            <Pressable testID="calendar-previous-month" onPress={() => setMonth(new Date(year, monthIndex - 1, 1))}><MaterialCommunityIcons name="chevron-left" size={25} color={C.forest} /></Pressable>
+            <Text style={s.calendarTitle}>{monthName}</Text>
+            <Pressable testID="calendar-next-month" onPress={() => setMonth(new Date(year, monthIndex + 1, 1))}><MaterialCommunityIcons name="chevron-right" size={25} color={C.forest} /></Pressable>
           </View>
-          <Text style={[s.dayNet, { color: row.income - row.expense >= 0 ? C.income : C.expense }]}>{money(row.income - row.expense)}</Text>
-          <MaterialCommunityIcons name="chevron-right" size={18} color={C.line} />
-        </Pressable>
-      ))}
+          <View testID="calendar-month-summary" style={s.calendarSummary}>
+            <View><Text style={s.panelLabel}>INCOME</Text><Text style={s.calendarIncome}>{money(monthIncome)}</Text></View>
+            <View><Text style={s.panelLabel}>EXPENSES</Text><Text style={s.calendarExpense}>{money(monthExpense)}</Text></View>
+            <View><Text style={s.panelLabel}>NET</Text><Text style={[s.calendarNet, { color: monthIncome - monthExpense >= 0 ? C.income : C.expense }]}>{money(monthIncome - monthExpense)}</Text></View>
+          </View>
+
+          <Pressable testID="export-month-button" onPress={exportPdf} disabled={exporting || rows.length === 0} style={[s.exportButton, (exporting || rows.length === 0) && s.exportDisabled]}>
+            <MaterialCommunityIcons name="file-pdf-box" size={19} color="#fff" />
+            <Text style={s.exportText}>{exporting ? "Preparing…" : `Export ${monthName} as PDF`}</Text>
+          </Pressable>
+
+          <View style={s.calendarLegend}>
+            <Text style={s.legendIncome}>● Income</Text>
+            <Text style={s.legendExpense}>● Expenses</Text>
+            <Text style={s.legendHint}>Tap a day for details</Text>
+          </View>
+
+          {rows.length === 0 ? (
+            <View style={s.empty}>
+              <MaterialCommunityIcons name="calendar-blank-outline" size={30} color={C.action} />
+              <Text style={s.emptyTitle}>No activity this month</Text>
+              <Text style={s.emptyCopy}>Income and expenses will appear here by day.</Text>
+            </View>
+          ) : rows.map((row) => (
+            <Pressable key={row.key} testID="calendar-day-row" onPress={() => setSelected(row.key)} style={s.dayRow}>
+              <View style={s.dayDate}><Text style={s.dayNumber}>{row.date.getDate()}</Text><Text style={s.dayName}>{new Intl.DateTimeFormat("en-IN", { weekday: "short" }).format(row.date)}</Text></View>
+              <View style={s.dayValues}>
+                {row.income ? <Text style={s.dayIncome}>+ {money(row.income)}</Text> : <Text style={s.dayMuted}>—</Text>}
+                {row.expense ? <Text style={s.dayExpense}>− {money(row.expense)}</Text> : <Text style={s.dayMuted}>—</Text>}
+              </View>
+              <Text style={[s.dayNet, { color: row.income - row.expense >= 0 ? C.income : C.expense }]}>{money(row.income - row.expense)}</Text>
+              <MaterialCommunityIcons name="chevron-right" size={18} color={C.line} />
+            </Pressable>
+          ))}
+        </>
+      )}
 
       {selected && <DayDetailModal dateKey={selected} incomes={dayIncomes} expenses={dayExpenses} onClose={() => setSelected(null)} />}
+    </View>
+  );
+}
+
+function YearOverview({ incomes, expenses, yearRef, setYearRef }: { incomes: Income[]; expenses: Expense[]; yearRef: number; setYearRef: (y: number) => void }) {
+  const data = MONTHS.map((label, m) => {
+    const inc = incomes.filter((r) => { const d = new Date(r.date); return d.getFullYear() === yearRef && d.getMonth() === m; }).reduce((sum, r) => sum + r.amount, 0);
+    const exp = expenses.filter((r) => { const d = new Date(r.date); return d.getFullYear() === yearRef && d.getMonth() === m; }).reduce((sum, r) => sum + r.amount + (r.repairAmount || 0), 0);
+    return { label, inc, exp, net: inc - exp };
+  });
+  const max = Math.max(1, ...data.map((d) => Math.max(d.inc, d.exp)));
+  const active = data.filter((d) => d.inc || d.exp);
+  const yearIncome = data.reduce((s, d) => s + d.inc, 0);
+  const yearExpense = data.reduce((s, d) => s + d.exp, 0);
+  const best = active.length ? active.reduce((a, b) => (b.net > a.net ? b : a)) : null;
+  const worst = active.length ? active.reduce((a, b) => (b.net < a.net ? b : a)) : null;
+  const CH = 150;
+
+  return (
+    <View testID="yearly-overview">
+      <View style={s.calendarHead}>
+        <Pressable testID="year-prev" onPress={() => setYearRef(yearRef - 1)}><MaterialCommunityIcons name="chevron-left" size={25} color={C.forest} /></Pressable>
+        <Text style={s.calendarTitle}>{yearRef}</Text>
+        <Pressable testID="year-next" onPress={() => setYearRef(yearRef + 1)}><MaterialCommunityIcons name="chevron-right" size={25} color={C.forest} /></Pressable>
+      </View>
+      <View style={s.calendarSummary}>
+        <View><Text style={s.panelLabel}>INCOME</Text><Text style={s.calendarIncome}>{money(yearIncome)}</Text></View>
+        <View><Text style={s.panelLabel}>EXPENSES</Text><Text style={s.calendarExpense}>{money(yearExpense)}</Text></View>
+        <View><Text style={s.panelLabel}>NET</Text><Text style={[s.calendarNet, { color: yearIncome - yearExpense >= 0 ? C.income : C.expense }]}>{money(yearIncome - yearExpense)}</Text></View>
+      </View>
+
+      {active.length === 0 ? (
+        <View style={s.empty}>
+          <MaterialCommunityIcons name="chart-bar" size={30} color={C.action} />
+          <Text style={s.emptyTitle}>No activity in {yearRef}</Text>
+          <Text style={s.emptyCopy}>Add records to see the monthly chart.</Text>
+        </View>
+      ) : (
+        <>
+          <View style={s.calendarLegend}>
+            <Text style={s.legendIncome}>● Income</Text>
+            <Text style={s.legendExpense}>● Expenses</Text>
+          </View>
+          <View style={s.chartCard}>
+            <View style={[s.chartBars, { height: CH }]}>
+              {data.map((d) => (
+                <View key={d.label} style={s.chartCol}>
+                  <View style={s.chartPair}>
+                    <View style={[s.barIncome, { height: Math.max(d.inc ? 3 : 0, Math.round((d.inc / max) * CH)) }]} />
+                    <View style={[s.barExpense, { height: Math.max(d.exp ? 3 : 0, Math.round((d.exp / max) * CH)) }]} />
+                  </View>
+                  <Text style={s.chartMonth}>{d.label[0]}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+          <View style={s.bestWorst}>
+            {best && <View style={s.bwItem}><MaterialCommunityIcons name="trophy-outline" size={16} color={C.income} /><Text style={s.bwText}>Best: <Text style={s.bwStrong}>{best.label}</Text> ({money(best.net)})</Text></View>}
+            {worst && <View style={s.bwItem}><MaterialCommunityIcons name="trending-down" size={16} color={C.expense} /><Text style={s.bwText}>Lowest: <Text style={s.bwStrong}>{worst.label}</Text> ({money(worst.net)})</Text></View>}
+          </View>
+        </>
+      )}
     </View>
   );
 }
@@ -562,27 +701,24 @@ function DayDetailModal({ dateKey, incomes, expenses, onClose }: { dateKey: stri
               <View><Text style={s.panelLabel}>EXPENSES</Text><Text style={[s.smallAmount, { color: C.expense }]}>{money(dayExpense)}</Text></View>
               <View><Text style={s.panelLabel}>NET</Text><Text style={[s.smallAmount, { color: dayIncome - dayExpense >= 0 ? C.income : C.expense }]}>{money(dayIncome - dayExpense)}</Text></View>
             </View>
-
             <Text style={s.detailSectionLabel}>INCOME</Text>
             {incomes.length === 0 ? <Text style={s.detailEmpty}>No income on this day.</Text> : incomes.map((r) => (
               <View key={r.id} testID="day-detail-income-row" style={s.detailRow}>
                 <View style={s.detailRowMain}>
-                  <Text style={s.detailRowTitle}>{r.product}{r.name ? ` · ${r.name}` : ""}</Text>
+                  <Text style={s.detailRowTitle}>{describeRow(r)}</Text>
                   <Text style={[s.detailStatus, { color: isPending(r) ? C.action : C.income }]}>{isPending(r) ? "Pending" : "Paid"}</Text>
                 </View>
                 <Text style={[s.detailAmount, { color: C.income }]}>+ {money(r.amount)}</Text>
               </View>
             ))}
-
             <Text style={s.detailSectionLabel}>EXPENSES</Text>
             {expenses.length === 0 ? <Text style={s.detailEmpty}>No expenses on this day.</Text> : expenses.map((r) => (
               <View key={r.id} testID="day-detail-expense-row" style={s.detailRow}>
-                <View style={s.detailRowMain}>
-                  <Text style={s.detailRowTitle}>{describeRow(r)}</Text>
-                </View>
+                <View style={s.detailRowMain}><Text style={s.detailRowTitle}>{describeRow(r)}</Text></View>
                 <Text style={[s.detailAmount, { color: C.expense }]}>− {money(r.amount + (r.repairAmount || 0))}</Text>
               </View>
             ))}
+            <View style={{ height: 30 }} />
           </ScrollView>
         </View>
       </View>
@@ -590,9 +726,176 @@ function DayDetailModal({ dateKey, incomes, expenses, onClose }: { dateKey: stri
   );
 }
 
-function Settings({ onClear }: { onClear: () => void }) {
+function RemindersModal({ incomes, overdueDays, setOverdueDays, onMarkPaid, onClose }: { incomes: Income[]; overdueDays: number; setOverdueDays: (n: number) => void; onMarkPaid: (id: string) => void; onClose: () => void }) {
+  const overdue = incomes.filter(isPending).map((r) => ({ r, days: daysSince(r.date) })).filter((x) => x.days >= overdueDays).sort((a, b) => b.days - a.days);
+  const totalOverdue = overdue.reduce((sum, x) => sum + x.r.amount, 0);
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <View style={s.modalWrap}>
+        <View style={s.sheet}>
+          <View style={s.sheetHandle} />
+          <View style={[s.formHead, s.detailHeaderPad]}>
+            <View>
+              <Text style={s.detailOverline}>PAYMENT REMINDERS</Text>
+              <Text style={s.formTitle}>Overdue</Text>
+            </View>
+            <Pressable testID="reminders-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
+          </View>
+          <ScrollView testID="reminders-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
+            <Text style={s.detailSectionLabel}>OLDER THAN</Text>
+            <View style={s.reminderChips}>
+              {[7, 15, 30, 60].map((n) => (
+                <Pressable key={n} testID={`reminder-days-${n}`} onPress={() => setOverdueDays(n)} style={[s.chip, overdueDays === n && s.chipSelected]}>
+                  <Text style={[s.chipText, overdueDays === n && s.chipTextSelected]}>{n} days</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={s.reminderTotal}>
+              <Text style={s.reminderTotalLabel}>{overdue.length} overdue · beyond {overdueDays} days</Text>
+              <Text style={s.reminderTotalAmt}>{money(totalOverdue)}</Text>
+            </View>
+            {overdue.length === 0 ? (
+              <View style={s.empty}>
+                <MaterialCommunityIcons name="check-circle-outline" size={30} color={C.income} />
+                <Text style={s.emptyTitle}>Nothing overdue</Text>
+                <Text style={s.emptyCopy}>No pending payments older than {overdueDays} days.</Text>
+              </View>
+            ) : overdue.map(({ r, days }) => (
+              <View key={r.id} testID="reminder-row" style={s.detailRow}>
+                <View style={s.detailRowMain}>
+                  <Text style={s.detailRowTitle}>{r.name || "Unnamed customer"}</Text>
+                  <Text style={s.reminderMeta}>{r.product} · {days} days overdue</Text>
+                </View>
+                <View style={s.reminderRight}>
+                  <Text style={[s.detailAmount, { color: C.action }]}>{money(r.amount)}</Text>
+                  <Pressable testID="reminder-mark-paid" hitSlop={8} onPress={() => onMarkPaid(r.id)} style={s.markPaid}><Text style={s.markPaidText}>Mark paid</Text></Pressable>
+                </View>
+              </View>
+            ))}
+            <View style={{ height: 30 }} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function CustomersModal({ incomes, onClose }: { incomes: Income[]; onClose: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const map = new Map<string, { name: string; total: number; pending: number; count: number; records: Income[] }>();
+  incomes.forEach((r) => {
+    const key = (r.name || "").trim() || "Unnamed customer";
+    const cur = map.get(key) || { name: key, total: 0, pending: 0, count: 0, records: [] };
+    cur.total += r.amount; if (isPending(r)) cur.pending += r.amount; cur.count += 1; cur.records.push(r);
+    map.set(key, cur);
+  });
+  const customers = [...map.values()].sort((a, b) => b.pending - a.pending || b.total - a.total);
+
+  const sendStatement = async (name: string, records: Income[], total: number, pending: number) => {
+    if (busy) return;
+    setBusy(name);
+    try {
+      const html = buildCustomerHTML(name, records, total, pending);
+      if (Platform.OS === "web") await Print.printAsync({ html });
+      else { const { uri } = await Print.printToFileAsync({ html }); if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: `Statement — ${name}`, UTI: "com.adobe.pdf" }); }
+    } catch { /* cancelled */ } finally { setBusy(null); }
+  };
+
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <View style={s.modalWrap}>
+        <View style={s.sheet}>
+          <View style={s.sheetHandle} />
+          <View style={[s.formHead, s.detailHeaderPad]}>
+            <View>
+              <Text style={s.detailOverline}>CUSTOMER STATEMENTS</Text>
+              <Text style={s.formTitle}>Customers</Text>
+            </View>
+            <Pressable testID="customers-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
+          </View>
+          <ScrollView testID="customers-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
+            {customers.length === 0 ? (
+              <View style={s.empty}>
+                <MaterialCommunityIcons name="account-group-outline" size={30} color={C.action} />
+                <Text style={s.emptyTitle}>No customers yet</Text>
+                <Text style={s.emptyCopy}>Add income with a customer name to build statements.</Text>
+              </View>
+            ) : customers.map((c) => (
+              <View key={c.name} testID="customer-row" style={s.customerRow}>
+                <View style={s.customerTop}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.customerName}>{c.name}</Text>
+                    <Text style={s.customerMeta}>{c.count} order{c.count === 1 ? "" : "s"} · Total {money(c.total)}</Text>
+                  </View>
+                  {c.pending > 0 && <View style={[s.badge, s.badgePending]}><Text style={[s.badgeText, { color: C.action }]}>{money(c.pending)} DUE</Text></View>}
+                </View>
+                <Pressable testID="customer-statement-button" onPress={() => sendStatement(c.name, c.records, c.total, c.pending)} disabled={!!busy} style={[s.statementBtn, !!busy && s.exportDisabled]}>
+                  <MaterialCommunityIcons name="file-pdf-box" size={16} color={C.forest} />
+                  <Text style={s.statementBtnText}>{busy === c.name ? "Preparing…" : "Send statement (PDF)"}</Text>
+                </Pressable>
+              </View>
+            ))}
+            <View style={{ height: 30 }} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function Settings({ incomes, expenses, onClear, onOpenCustomers, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onRestore: (inc: Income[], exp: Expense[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
+  const [notice, setNotice] = useState("");
+
+  const doBackup = async () => {
+    const payload = JSON.stringify({ app: "coir-ledger", version: 1, exportedAt: new Date().toISOString(), incomes, expenses }, null, 2);
+    try {
+      if (Platform.OS === "web") {
+        await Clipboard.setStringAsync(payload);
+        setNotice("Backup copied to clipboard. Paste and save it somewhere safe.");
+      } else {
+        const uri = FileSystem.documentDirectory + `coir-ledger-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        await FileSystem.writeAsStringAsync(uri, payload);
+        if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/json", dialogTitle: "Coir Ledger backup" });
+        else { await Clipboard.setStringAsync(payload); setNotice("Backup copied to clipboard."); }
+      }
+    } catch { setNotice("Could not create backup."); }
+  };
+
+  const doRestore = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({ type: ["application/json", "text/plain", "*/*"], copyToCacheDirectory: true });
+      if (res.canceled || !res.assets?.length) return;
+      const asset = res.assets[0];
+      const content = Platform.OS === "web" ? await (await fetch(asset.uri)).text() : await FileSystem.readAsStringAsync(asset.uri);
+      const parsed = JSON.parse(content);
+      if (!Array.isArray(parsed.incomes) || !Array.isArray(parsed.expenses)) { setNotice("That file is not a Coir Ledger backup."); return; }
+      requestConfirm({
+        title: "Restore this backup?",
+        message: `This replaces your current data with ${parsed.incomes.length} income and ${parsed.expenses.length} expense records.`,
+        confirmLabel: "Restore",
+        onConfirm: () => { onRestore(parsed.incomes, parsed.expenses); setNotice("Records restored successfully."); },
+      });
+    } catch { setNotice("Could not read that file."); }
+  };
+
   return (
     <View style={s.settings}>
+      <Pressable testID="open-customers-button" style={s.settingRow} onPress={onOpenCustomers}>
+        <MaterialCommunityIcons name="account-group-outline" size={22} color={C.forest} />
+        <View style={s.settingCopy}><Text style={s.settingTitle}>Customer statements</Text><Text style={s.settingSub}>See orders and dues per customer, and send a PDF statement.</Text></View>
+        <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
+      </Pressable>
+      <Pressable testID="backup-button" style={s.settingRow} onPress={doBackup}>
+        <MaterialCommunityIcons name="cloud-upload-outline" size={22} color={C.forest} />
+        <View style={s.settingCopy}><Text style={s.settingTitle}>Back up data</Text><Text style={s.settingSub}>Save a copy of all records to a file you can keep or move to a new phone.</Text></View>
+        <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
+      </Pressable>
+      <Pressable testID="restore-button" style={s.settingRow} onPress={doRestore}>
+        <MaterialCommunityIcons name="cloud-download-outline" size={22} color={C.forest} />
+        <View style={s.settingCopy}><Text style={s.settingTitle}>Restore from backup</Text><Text style={s.settingSub}>Load records from a backup file (replaces current data).</Text></View>
+        <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
+      </Pressable>
+      {notice ? <Text testID="settings-notice" style={s.settingsNotice}>{notice}</Text> : null}
       <View style={s.settingRow}>
         <MaterialCommunityIcons name="cellphone-lock" size={22} color={C.forest} />
         <View style={s.settingCopy}><Text style={s.settingTitle}>Private by default</Text><Text style={s.settingSub}>Your records are stored only on this device.</Text></View>
@@ -600,10 +903,6 @@ function Settings({ onClear }: { onClear: () => void }) {
       <View style={s.settingRow}>
         <MaterialCommunityIcons name="cash" size={22} color={C.forest} />
         <View style={s.settingCopy}><Text style={s.settingTitle}>Currency</Text><Text style={s.settingSub}>Indian Rupee (₹ INR)</Text></View>
-      </View>
-      <View style={s.settingRow}>
-        <MaterialCommunityIcons name="file-pdf-box" size={22} color={C.forest} />
-        <View style={s.settingCopy}><Text style={s.settingTitle}>Export</Text><Text style={s.settingSub}>Open the Calendar tab to export any month as a PDF.</Text></View>
       </View>
       <Pressable testID="clear-all-records-button" style={s.clearButton} onPress={onClear}>
         <MaterialCommunityIcons name="delete-sweep-outline" size={20} color={C.expense} />
@@ -614,6 +913,7 @@ function Settings({ onClear }: { onClear: () => void }) {
 }
 
 const escapeHtml = (v: unknown) => String(v ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+const pdfStyle = `* { box-sizing: border-box; } body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1F2924; padding: 28px; } h1 { font-size: 22px; margin: 0; } .sub { color: #59635C; font-size: 12px; margin: 4px 0 20px; } .cards { display: flex; gap: 12px; margin-bottom: 22px; } .card { flex: 1; border: 1px solid #D8D1C4; border-radius: 8px; padding: 12px 14px; } .card .k { font-size: 10px; letter-spacing: 1px; color: #59635C; text-transform: uppercase; } .card .v { font-size: 18px; font-weight: 700; margin-top: 6px; } .inc { color: #2F7D57; } .exp { color: #B65A43; } h2 { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #C76B35; margin: 22px 0 8px; } table { width: 100%; border-collapse: collapse; font-size: 12px; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #E6DFD2; } th { background: #F0E9DC; font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: #59635C; } td.amt, th.amt { text-align: right; font-variant-numeric: tabular-nums; } td.empty { text-align: center; color: #9DA49D; font-style: italic; } tfoot td { font-weight: 700; border-top: 2px solid #1F2924; } .foot { margin-top: 26px; font-size: 10px; color: #9DA49D; }`;
 
 function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totIn: number, totEx: number) {
   const incRows = incs.length
@@ -622,26 +922,7 @@ function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totI
   const expRows = exps.length
     ? exps.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.category)}</td><td>${escapeHtml(r.description || (r.category === "Husk" && r.trips ? `${r.trips} trips @ ₹${r.costPerTon}/trip` : ""))}</td><td class="amt">${escapeHtml(money(r.amount + (r.repairAmount || 0)))}</td></tr>`).join("")
     : `<tr><td colspan="4" class="empty">No expenses recorded</td></tr>`;
-  return `<!doctype html><html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1F2924; padding: 28px; }
-    h1 { font-size: 22px; margin: 0; }
-    .sub { color: #59635C; font-size: 12px; margin: 4px 0 20px; }
-    .cards { display: flex; gap: 12px; margin-bottom: 22px; }
-    .card { flex: 1; border: 1px solid #D8D1C4; border-radius: 8px; padding: 12px 14px; }
-    .card .k { font-size: 10px; letter-spacing: 1px; color: #59635C; text-transform: uppercase; }
-    .card .v { font-size: 18px; font-weight: 700; margin-top: 6px; }
-    .inc { color: #2F7D57; } .exp { color: #B65A43; }
-    h2 { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #C76B35; margin: 22px 0 8px; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #E6DFD2; }
-    th { background: #F0E9DC; font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: #59635C; }
-    td.amt, th.amt { text-align: right; font-variant-numeric: tabular-nums; }
-    td.empty { text-align: center; color: #9DA49D; font-style: italic; }
-    tfoot td { font-weight: 700; border-top: 2px solid #1F2924; }
-    .foot { margin-top: 26px; font-size: 10px; color: #9DA49D; }
-  </style></head><body>
+  return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
     <h1>Coir Ledger</h1>
     <div class="sub">${escapeHtml(monthName)} · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
     <div class="cards">
@@ -651,13 +932,30 @@ function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totI
     </div>
     <h2>Income</h2>
     <table><thead><tr><th>Date</th><th>Product</th><th>Name</th><th>Status</th><th class="amt">Amount</th></tr></thead>
-    <tbody>${incRows}</tbody>
-    <tfoot><tr><td colspan="4">Total income</td><td class="amt">${escapeHtml(money(totIn))}</td></tr></tfoot></table>
+    <tbody>${incRows}</tbody><tfoot><tr><td colspan="4">Total income</td><td class="amt">${escapeHtml(money(totIn))}</td></tr></tfoot></table>
     <h2>Expenses</h2>
     <table><thead><tr><th>Date</th><th>Category</th><th>Details</th><th class="amt">Amount</th></tr></thead>
-    <tbody>${expRows}</tbody>
-    <tfoot><tr><td colspan="3">Total expenses</td><td class="amt">${escapeHtml(money(totEx))}</td></tr></tfoot></table>
+    <tbody>${expRows}</tbody><tfoot><tr><td colspan="3">Total expenses</td><td class="amt">${escapeHtml(money(totEx))}</td></tr></tfoot></table>
     <div class="foot">Stored on device · Coir Ledger</div>
+  </body></html>`;
+}
+
+function buildCustomerHTML(name: string, records: Income[], total: number, pending: number) {
+  const sorted = [...records].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const rows = sorted.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.product)}</td><td>${r.tons ? `${r.tons}t @ ₹${r.costPerTon}/t` : "—"}</td><td>${isPending(r) ? "Pending" : "Paid"}</td><td class="amt">${escapeHtml(money(r.amount))}</td></tr>`).join("");
+  return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
+    <h1>Statement · ${escapeHtml(name)}</h1>
+    <div class="sub">Coir Ledger · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
+    <div class="cards">
+      <div class="card"><div class="k">Total Purchased</div><div class="v inc">${escapeHtml(money(total))}</div></div>
+      <div class="card"><div class="k">Amount Paid</div><div class="v">${escapeHtml(money(total - pending))}</div></div>
+      <div class="card"><div class="k">Outstanding Due</div><div class="v exp">${escapeHtml(money(pending))}</div></div>
+    </div>
+    <h2>Purchases</h2>
+    <table><thead><tr><th>Date</th><th>Product</th><th>Qty / Rate</th><th>Status</th><th class="amt">Amount</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="5" class="empty">No purchases</td></tr>`}</tbody>
+    <tfoot><tr><td colspan="4">Outstanding due</td><td class="amt">${escapeHtml(money(pending))}</td></tr></tfoot></table>
+    <div class="foot">Thank you for your business · Coir Ledger</div>
   </body></html>`;
 }
 
@@ -729,7 +1027,7 @@ const s = StyleSheet.create({
   fab: { minHeight: 44, paddingHorizontal: 14, borderRadius: 24, flexDirection: "row", alignItems: "center", gap: 5, elevation: 3 },
   fabText: { color: "#fff", fontSize: 13, fontWeight: "800" },
   nav: { position: "absolute", bottom: 0, left: 0, right: 0, height: 72, paddingBottom: Platform.OS === "ios" ? 12 : 4, backgroundColor: C.nav, flexDirection: "row", justifyContent: "space-around", alignItems: "center" },
-  navItem: { minWidth: 65, minHeight: 50, alignItems: "center", justifyContent: "center" },
+  navItem: { minWidth: 60, minHeight: 50, alignItems: "center", justifyContent: "center" },
   navText: { color: "#B8C1B9", fontSize: 10, marginTop: 3, fontWeight: "700" },
   modalWrap: { flex: 1, justifyContent: "flex-end", backgroundColor: "rgba(23,60,44,.35)" },
   sheet: { backgroundColor: C.surface, maxHeight: "88%", borderTopLeftRadius: 20, borderTopRightRadius: 20 },
@@ -738,11 +1036,14 @@ const s = StyleSheet.create({
   formHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 },
   formTitle: { color: C.ink, fontFamily: Platform.select({ ios: "Georgia", default: "serif" }), fontSize: 26, fontWeight: "700", textTransform: "capitalize" },
   dateLabelRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  todayLink: { color: C.forest, fontSize: 12, fontWeight: "800", marginTop: 10 },
+  todayLink: { color: C.forest, fontSize: 13, fontWeight: "800" },
   inputLabel: { color: C.muted, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 8, marginTop: 10 },
   inputRow: { minHeight: 50, borderWidth: 1, borderColor: C.line, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   inputValue: { flex: 1, color: C.ink, fontSize: 15 },
   textInputBox: { minHeight: 48, borderWidth: 1, borderColor: C.line, paddingHorizontal: 14, color: C.ink, fontSize: 15 },
+  textInputSmall: { flex: 1, color: C.ink, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 15 },
+  twoCol: { flexDirection: "row", gap: 12 },
+  colItem: { flex: 1 },
   options: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   option: { minHeight: 44, borderWidth: 1, borderColor: C.line, paddingHorizontal: 13, flexDirection: "row", alignItems: "center", gap: 6 },
   optionSelected: { backgroundColor: C.forest, borderColor: C.forest },
@@ -768,6 +1069,11 @@ const s = StyleSheet.create({
   outputRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 12, paddingTop: 10, borderTopWidth: 1, borderTopColor: C.line },
   outputText: { color: C.muted, fontSize: 11 },
   outputValue: { color: C.forest, fontSize: 12, fontWeight: "800" },
+  modeToggle: { flexDirection: "row", backgroundColor: "#E9E2D7", borderRadius: 22, padding: 4, marginBottom: 14 },
+  modeBtn: { flex: 1, minHeight: 38, alignItems: "center", justifyContent: "center", borderRadius: 18 },
+  modeBtnSel: { backgroundColor: C.forest },
+  modeText: { color: C.muted, fontSize: 13, fontWeight: "700" },
+  modeTextSel: { color: "#fff" },
   calendarHead: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, padding: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   calendarTitle: { color: C.ink, fontFamily: Platform.select({ ios: "Georgia", default: "serif" }), fontSize: 20, fontWeight: "700" },
   calendarSummary: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderTopWidth: 0, padding: 14, flexDirection: "row", justifyContent: "space-between" },
@@ -778,6 +1084,17 @@ const s = StyleSheet.create({
   legendIncome: { color: C.income, fontSize: 12, fontWeight: "700" },
   legendExpense: { color: C.expense, fontSize: 12, fontWeight: "700" },
   legendHint: { color: C.muted, fontSize: 11, marginLeft: "auto", fontStyle: "italic" },
+  chartCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 14 },
+  chartBars: { flexDirection: "row", alignItems: "flex-end", justifyContent: "space-between" },
+  chartCol: { flex: 1, alignItems: "center" },
+  chartPair: { flexDirection: "row", alignItems: "flex-end", gap: 2, height: 150 },
+  barIncome: { width: 7, backgroundColor: C.income, borderTopLeftRadius: 2, borderTopRightRadius: 2 },
+  barExpense: { width: 7, backgroundColor: C.expense, borderTopLeftRadius: 2, borderTopRightRadius: 2 },
+  chartMonth: { color: C.muted, fontSize: 9, fontWeight: "700", marginTop: 6 },
+  bestWorst: { marginTop: 14, gap: 8 },
+  bwItem: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 8, padding: 12 },
+  bwText: { color: C.ink, fontSize: 13 },
+  bwStrong: { fontWeight: "800" },
   dayRow: { backgroundColor: C.surface, minHeight: 68, borderWidth: 1, borderColor: C.line, borderBottomWidth: 0, padding: 12, flexDirection: "row", alignItems: "center", gap: 4 },
   dayDate: { width: 52 },
   dayNumber: { color: C.ink, fontSize: 20, fontWeight: "800" },
@@ -798,11 +1115,26 @@ const s = StyleSheet.create({
   detailRowTitle: { color: C.ink, fontSize: 14, fontWeight: "600" },
   detailStatus: { fontSize: 11, fontWeight: "800", marginTop: 3 },
   detailAmount: { fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 14, fontWeight: "800" },
+  reminderChips: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  reminderTotal: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: "#F7EAD8", borderWidth: 1, borderColor: "#E6C89A", borderRadius: 10, padding: 14, marginTop: 14 },
+  reminderTotalLabel: { color: C.ink, fontSize: 13, fontWeight: "700" },
+  reminderTotalAmt: { color: C.action, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 16, fontWeight: "800" },
+  reminderMeta: { color: C.muted, fontSize: 12, marginTop: 3 },
+  reminderRight: { alignItems: "flex-end", gap: 6 },
+  markPaid: { backgroundColor: C.forest, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 },
+  markPaidText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  customerRow: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 14, marginTop: 12 },
+  customerTop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  customerName: { color: C.ink, fontSize: 16, fontWeight: "800" },
+  customerMeta: { color: C.muted, fontSize: 12, marginTop: 3 },
+  statementBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, minHeight: 44, borderRadius: 8, borderWidth: 1, borderColor: C.forest },
+  statementBtnText: { color: C.forest, fontSize: 13, fontWeight: "800" },
   settings: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line },
   settingRow: { padding: 18, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: "row", gap: 14, alignItems: "center" },
   settingCopy: { flex: 1 },
   settingTitle: { color: C.ink, fontSize: 15, fontWeight: "800" },
   settingSub: { color: C.muted, fontSize: 13, marginTop: 4, lineHeight: 18 },
+  settingsNotice: { color: C.forest, fontSize: 13, fontWeight: "700", padding: 16, backgroundColor: "#E4F0E8", borderBottomWidth: 1, borderBottomColor: C.line },
   clearButton: { minHeight: 56, paddingHorizontal: 18, flexDirection: "row", gap: 10, alignItems: "center" },
   clearText: { color: C.expense, fontWeight: "800" },
   confirmWrap: { flex: 1, justifyContent: "center", alignItems: "center", padding: 28, backgroundColor: "rgba(23,60,44,.45)" },
@@ -811,4 +1143,17 @@ const s = StyleSheet.create({
   confirmMessage: { color: C.muted, fontSize: 14, marginTop: 8, lineHeight: 20 },
   confirmButtons: { flexDirection: "row", gap: 10, marginTop: 22 },
   confirmDanger: { flex: 1.4, minHeight: 50, backgroundColor: C.expense, alignItems: "center", justifyContent: "center", borderRadius: 8 },
+  datePickerCard: { width: "100%", backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 14, padding: 18 },
+  dpHeading: { color: C.action, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 10 },
+  dpHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
+  dpTitle: { color: C.ink, fontSize: 16, fontWeight: "800" },
+  dpWeekRow: { flexDirection: "row" },
+  dpWeek: { flexBasis: "14.28%", textAlign: "center", color: C.muted, fontSize: 11, fontWeight: "800", paddingVertical: 6 },
+  dpGrid: { flexDirection: "row", flexWrap: "wrap" },
+  dpCell: { flexBasis: "14.28%", height: 40, alignItems: "center", justifyContent: "center" },
+  dpCellSel: { },
+  dpDay: { color: C.ink, fontSize: 14, width: 34, height: 34, borderRadius: 17, textAlign: "center", textAlignVertical: "center", lineHeight: 34 },
+  dpDaySel: { backgroundColor: C.forest, color: "#fff", overflow: "hidden", fontWeight: "800" },
+  dpFoot: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line },
+  dpCloseText: { color: C.muted, fontSize: 14, fontWeight: "800" },
 });

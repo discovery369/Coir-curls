@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only regression at 390x844 after this round's 4 new features + custom DatePickerModal. ALL 13 requested flows PASS. (1) App loads cleanly, no red screen. (2) Income auto-amount: tons=5 * cost=2000 => record-amount-input auto-fills '10000.00'; amount-mode-toggle flips manual/auto correctly and typing in tons/cost sets manualAmount=false (auto recomputes). (3) DatePickerModal: record-date-input opens date-picker-modal; dp-prev/dp-next change month; dp-day-10 selected in a past month persists to the record; dp-close/dp-today present; filter-date-from ALSO opens the same date-picker-modal (verified opens on Income tab). (4) Payment status: record-status-paid/pending both save correctly; income-status-toggle inline BADGE ON LEDGER ROW NOW TOGGLES CORRECTLY (previous iteration_4 regression is FIXED) — PENDING->PAID on tap, and outstanding-pill hides in the same render. (5) Reminders: outstanding-pill opens reminders-modal; all 4 chips (7/15/30/60 days) present; a 3-month-old pending income appears at 60-day threshold; reminder-mark-paid marks paid, row removed (1->0), outstanding-pill disappears; 'Nothing overdue' empty state renders correctly. (6) Customers: bottom-nav-settings > open-customers-button opens customers-modal; 2 customer-row items (Customer A ₹10,000, Customer B ₹3,000); customer-statement-button rendered & enabled (not tapped on web to avoid PDF trigger). (7) Yearly Overview: bottom-nav-calendar > calendar-mode-year renders yearly-overview with year-prev/year-next present; calendar-mode-month returns to month view + export-month-button visible. (8) Month view: export-month-button rendered/enabled with data; calendar-day-row list rendered. (9) Husk expense: description + husk-loads-input + expense-cost-per-trip-input; amount auto = 3*1000=3000.00; NO husk-weight-input (confirmed absent). (10) backup-button: on web copies JSON to clipboard and shows settings-notice 'Backup copied to clipboard. Paste and save it somewhere safe.' — no crash. (11) restore-button: tapping does not crash (picker opens, we don't complete it as instructed). (12) Search filters ledger by name ('Ledger X' -> 1 row); 'No matching records' empty state shows for unmatched query. (13) Delete via record-delete-button opens confirm-dialog and successfully removes the row; totals + records persist across a full page reload (₹13k / ₹3k retained). Overall: 13/13 flows PASS; previous badge-toggle regression is FIXED. Only structural concern is index.tsx has grown from 814 to 1159 lines — well past the 700-line threshold.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_5.json",
+    "/app/test_reports/ui/it5_p1.jpeg",
+    "/app/test_reports/ui/it5_customers.jpeg",
+    "/app/test_reports/ui/it5_year.jpeg",
+    "/app/test_reports/ui/it5_badge_delete.jpeg",
+    "/app/test_reports/ui/it5_after_reminders.jpeg"
+  ],
+  "action_items": [
+    "REFACTOR (P1, tech-debt): /app/frontend/app/index.tsx is now 1159 lines. Split into files under /app/frontend/app/components/: RecordForm, DatePickerModal, CalendarView (Month + Year), DayDetailModal, RemindersModal, CustomersModal, Ledger, Filters, ConfirmModal, SettingsPanel, and the buildMonthHTML/PDF helpers into a utils/pdf.ts. Non-blocking for release but urgent for maintainability.",
+    "Optional polish: on web the amount-mode-toggle is only reachable after scrolling the sheet; consider making the toggle a small chip on the same row as the AMOUNT label so it's visible without scroll (currently it sits below the amount input on a small viewport)."
+  ],
+  "critical_code_review_comments": [
+    "index.tsx at 1159 lines exceeds the 700-line threshold; split into components/ modules (see action items).",
+    "Manual-amount UX asymmetry: typing in record-amount-input sets manualAmount=true (locks auto), but typing in income-tons-input or income-cost-per-ton-input explicitly sets manualAmount=false, which silently overrides a user's manual amount if they later edit tons/cost. Reference: /app/frontend/app/index.tsx:446-452. Consider showing a subtle indicator that switching tons/cost will overwrite a manually-entered amount, or preserve manual mode until the user explicitly toggles back to auto.",
+    "settings-notice text is transient — no dismiss control and no auto-clear timer confirmed in the smoke test. Consider adding a 4-5s auto-clear via setTimeout so consecutive backup taps don't leave stale success text on screen."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% (13 of 13 flows PASS; prior income-status-toggle regression FIXED)"},
+  "seed_data_creation": "Test session created 2 incomes (TEST Customer A ₹10,000 pending, TEST Customer B ₹3,000 paid) and 1 husk expense (TEST Husk Vendor ₹3,000). Ended with 1 income deleted; remaining data lives only in browser-local AsyncStorage.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Public preview: https://profit-calculator-111.preview.emergentagent.com. 390x844 viewport. AsyncStorage is per-browser-context; each fresh Playwright run starts empty, so add data in-session before verifying downstream features. Two automation-specific tips: (a) Playwright's page.click(force=True) still enforces the viewport check and fails on RN-web modal elements below the fold — use el.dispatchEvent(pointerdown/pointerup/mousedown/mouseup/click) via page.evaluate to reliably tap Pressables inside the RecordForm/CustomersModal/RemindersModal sheets. (b) The tons/cost inputs reset manualAmount to false on edit — if you need to test manual mode, do it AFTER filling tons/cost, not before. Nothing broken; all 4 new features (Customer Statements, Reminders, Yearly Overview, Backup/Restore) plus the new DatePickerModal are green. Only outstanding tech-debt item is the 1159-line monolithic index.tsx."
+}

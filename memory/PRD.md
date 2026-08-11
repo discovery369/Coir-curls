@@ -22,6 +22,12 @@ Product requirements: device-only storage (no backend), ₹ INR currency, manual
 Small coir business owner/operator recording daily cash movement on a phone; needs quick entry, glanceable net balance, and daily/monthly review.
 
 ## Implemented (2026-06-11)
+- **Income auto-amount**: Tons × Cost per ton auto-computes the amount, with a toggle to enter it manually.
+- **Custom cross-platform date picker**: in-app calendar (DatePickerModal) replaces the native picker so date editing works in every category on web + native; also powers the From/To filters.
+- **Customer Statements**: Settings → Customer statements lists each customer with totals and outstanding dues, and generates a per-customer PDF statement.
+- **Payment Reminders**: the Overview pending pill opens a Reminders modal with day-threshold chips (7/15/30/60) listing overdue pending incomes, each with a "Mark paid" action.
+- **Yearly Overview**: Calendar Month/Year toggle; Year view shows a 12-month income-vs-expense bar chart, year totals, and best/lowest month.
+- **Backup & Restore**: Settings backs up all data (file share on device / clipboard on web) and restores from a backup file.
 - Dashboard: net balance + income/expenses totals, segmented tabs (Combined/Income/Expenses/Calendar), bottom nav (Overview/Income/Expenses/Calendar/Settings).
 - **Payment Status** on income: Paid/Pending toggle in form; tappable status badge on each income row; Overview "outstanding pending from customers" pill (sum of pending income) that jumps to the Income tab.
 - **Search & Filter**: search box (name/product/category/description), From/To date-range pickers with clear, and per-table category filter chips (horizontal scroller). "No matching records" empty state.
