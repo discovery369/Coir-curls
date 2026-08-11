@@ -23,6 +23,11 @@ Small coir business owner/operator recording daily cash movement on a phone; nee
 
 ## Implemented (2026-06-11)
 - Dashboard: net balance + income/expenses totals, segmented tabs (Combined/Income/Expenses/Calendar), bottom nav (Overview/Income/Expenses/Calendar/Settings).
+- **Payment Status** on income: Paid/Pending toggle in form; tappable status badge on each income row; Overview "outstanding pending from customers" pill (sum of pending income) that jumps to the Income tab.
+- **Search & Filter**: search box (name/product/category/description), From/To date-range pickers with clear, and per-table category filter chips (horizontal scroller). "No matching records" empty state.
+- **Day Details**: tapping any calendar day opens a modal listing that day's individual income & expense entries with a day summary.
+- **Export to PDF**: Calendar tab button exports the shown month's income + expenses (with totals) to a PDF via expo-print/expo-sharing (share sheet on device; print dialog on web). Disabled when the month has no activity.
+- **Husk expense (updated rules)**: fields are NAME, NUMBER OF TRIPS, COST PER TRIP (weight-per-trip input removed). Auto amount = costPerTrip × trips (manual override available). Processing output uses fixed 4 tons/trip → coir 25% / pith 75%.
 - Income & Expense ledger tables with add/edit/delete.
 - Record form: today-preselected date picker, product/category selector, amount validation (> ₹0).
 - Category-specific fields: Salaries & Current bill → Name; Maintenance → Description; Husk → trips, weight/trip, cost/ton, auto amount (cost×trips×weight) with manual override + coir/pith output summary (25%/75%).
