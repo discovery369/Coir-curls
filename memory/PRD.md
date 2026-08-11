@@ -32,7 +32,13 @@ Small coir business owner/operator recording daily cash, tracking customer dues,
 - Security hardening: restore input validated/coerced (sanitizeIncome/Expense); user text escaped in generated PDF HTML.
 
 ## Testing
-- testing_agent iterations 3–8: all flows pass, no regressions. Latest: iteration_8 all green.
+- testing_agent iterations 3–9: all flows pass, no regressions. Latest: iteration_9 all green (newest-first sort, category Received/Pending breakdown, expense Paid/Pending status, vendor drill-down).
+
+## Implemented (2026-06-11, update)
+- Ledgers now sort newest date first (Income & Expenses).
+- Inline per-category breakdown at top of each ledger tab: Income shows RECEIVED vs PENDING for Coir Pith & Coir Bale (Pith & Bale totals); Expenses show PAID vs PENDING per category.
+- Expenses now carry a Paid/Pending status (RecordForm selector + row badge).
+- Vendors screen: each vendor is tappable to drill into full transaction history (income + expense, newest first) with income/expense/pending summary.
 
 ## Backlog
 - P1: Split index.tsx (~1490 lines) into components/ + utils/.

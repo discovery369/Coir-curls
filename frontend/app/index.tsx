@@ -9,7 +9,7 @@ import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, SafeAreaView
 
 type Payment = { id: string; date: string; amount: number };
 type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; phone?: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[] };
-type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number };
+type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending" };
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
 type Backup = { id: string; createdAt: string; incomes: Income[]; expenses: Expense[] };
 
@@ -36,6 +36,8 @@ const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(
 const paidSum = (r: Income) => (r.payments || []).reduce((sum, p) => sum + p.amount, 0);
 const dueOf = (r: Income) => { const paid = paidSum(r); if (paid > 0) return Math.max(0, r.amount - paid); return r.status === "pending" ? r.amount : 0; };
 const hasDue = (r: Income) => dueOf(r) > 0.009;
+const expenseTotal = (r: Expense) => r.amount + (r.repairAmount || 0);
+const expenseDue = (r: Expense) => (r.status === "pending" ? expenseTotal(r) : 0);
 const isSameDay = (a: Date | null, b: Date) => !!a && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const daysSince = (iso: string) => Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(iso)).getTime()) / 86400000);
 const toNum = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -70,6 +72,7 @@ const sanitizeExpense = (r: Record<string, unknown>): Expense => ({
   coirOutput: toNum(r.coirOutput),
   pithOutput: toNum(r.pithOutput),
   trips: toNum(r.trips),
+  status: r.status === "pending" ? "pending" : "paid",
 });
 
 export default function Index() {
@@ -382,7 +385,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
     if (dateFrom && d < startOfDay(dateFrom)) return false;
     if (dateTo && d > endOfDay(dateTo)) return false;
     return true;
-  });
+  }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   const hasFilter = chip !== "All" || !!query.trim() || !!dateFrom || !!dateTo;
 
   return (
@@ -406,6 +409,8 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
         ))}
       </ScrollView>
 
+      <CategoryBreakdown kind={kind} rows={filtered} />
+
       <View style={s.tableHeader}>
         <Text style={[s.cell, s.dateCell]}>DATE</Text>
         <Text style={s.cell}>{isIncome ? "PRODUCT" : "CATEGORY"}</Text>
@@ -420,7 +425,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
           <Text style={s.emptyCopy}>{hasFilter ? "Try a different search or filter." : isIncome ? "Add your first Coir Pith or Coir Bale sale." : "Add salaries, current bill, maintenance or husk."}</Text>
         </View>
       ) : filtered.map((row) => {
-        const due = isIncome ? dueOf(row as Income) : 0;
+        const due = isIncome ? dueOf(row as Income) : expenseDue(row as Expense);
         const partPaid = isIncome && paidSum(row as Income) > 0 && due > 0;
         const badgeLabel = due > 0 ? (partPaid ? "PART PAID" : "PENDING") : "PAID";
         return (
@@ -428,11 +433,16 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
             <Text style={[s.rowText, s.dateCell]}>{displayDate(row.date)}</Text>
             <View style={s.cell}>
               <Text style={s.rowText} numberOfLines={2}>{describeRow(row)}</Text>
-              {isIncome && (
+              {isIncome ? (
                 <Pressable testID="income-status-toggle" accessibilityRole="button" accessibilityLabel="Manage payments" hitSlop={10} onPress={() => onOpenPayment?.(row.id)} style={[s.badge, due > 0 ? s.badgePending : s.badgePaid]}>
                   <MaterialCommunityIcons name={due > 0 ? "clock-outline" : "check-circle"} size={12} color={due > 0 ? C.action : C.income} />
                   <Text style={[s.badgeText, { color: due > 0 ? C.action : C.income }]}>{badgeLabel}</Text>
                 </Pressable>
+              ) : (
+                <View testID="expense-status-badge" style={[s.badge, due > 0 ? s.badgePending : s.badgePaid]}>
+                  <MaterialCommunityIcons name={due > 0 ? "clock-outline" : "check-circle"} size={12} color={due > 0 ? C.action : C.income} />
+                  <Text style={[s.badgeText, { color: due > 0 ? C.action : C.income }]}>{due > 0 ? "PENDING" : "PAID"}</Text>
+                </View>
               )}
             </View>
             <Text style={[s.rowText, s.amountCell, { color: isIncome ? C.income : C.expense }]}>{money(row.amount + ("repairAmount" in row ? row.repairAmount || 0 : 0))}</Text>
@@ -443,6 +453,43 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
           </View>
         );
       })}
+    </View>
+  );
+}
+
+function CategoryBreakdown({ kind, rows }: { kind: "income" | "expense"; rows: (Income | Expense)[] }) {
+  const isIncome = kind === "income";
+  const cats = isIncome ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Current bill", "Maintenance", "Husk"];
+  const data = cats.map((cat) => {
+    const items = rows.filter((r) => (isIncome ? (r as Income).product : (r as Expense).category) === cat);
+    let received = 0, pending = 0;
+    items.forEach((r) => {
+      if (isIncome) { const inc = r as Income; const due = dueOf(inc); received += inc.amount - due; pending += due; }
+      else { const exp = r as Expense; const due = expenseDue(exp); pending += due; received += expenseTotal(exp) - due; }
+    });
+    return { cat, count: items.length, received, pending, total: received + pending };
+  }).filter((d) => d.count > 0);
+  if (data.length === 0) return null;
+  const receivedLabel = isIncome ? "RECEIVED" : "PAID";
+  return (
+    <View testID={`${kind}-category-breakdown`} style={s.breakdownCard}>
+      <View style={s.breakdownHeadRow}>
+        <Text style={s.breakdownTitle}>{isIncome ? "PITH & BALE TOTALS" : "CATEGORY TOTALS"}</Text>
+        <View style={s.breakdownLegend}>
+          <Text style={s.breakdownLegendReceived}>● {receivedLabel}</Text>
+          <Text style={s.breakdownLegendPending}>● PENDING</Text>
+        </View>
+      </View>
+      {data.map((d) => (
+        <View key={d.cat} testID={`breakdown-row-${d.cat.replace(/\s+/g, "-").toLowerCase()}`} style={s.breakdownRow}>
+          <View style={s.breakdownCatCol}>
+            <Text style={s.breakdownCat} numberOfLines={1}>{d.cat}</Text>
+            <Text style={s.breakdownCount}>{d.count} · {money(d.total)}</Text>
+          </View>
+          <Text style={s.breakdownReceived} testID={`breakdown-received-${d.cat.replace(/\s+/g, "-").toLowerCase()}`}>{money(d.received)}</Text>
+          <Text style={s.breakdownPending} testID={`breakdown-pending-${d.cat.replace(/\s+/g, "-").toLowerCase()}`}>{money(d.pending)}</Text>
+        </View>
+      ))}
     </View>
   );
 }
@@ -504,6 +551,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
           pithOutput: isHusk ? tripCount * (TONS_PER_TRIP * 0.75) : 0,
           costPerTon: Number(costPerTrip) || 0,
           totalWeight: isHusk ? tripCount * TONS_PER_TRIP : 0,
+          status,
         });
   };
 
@@ -584,6 +632,15 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
                   </View>
                 </>
               )}
+              <Text style={s.inputLabel}>PAYMENT STATUS</Text>
+              <View style={s.options}>
+                {(["paid", "pending"] as const).map((st) => (
+                  <Pressable key={st} testID={`expense-status-${st}`} onPress={() => setStatus(st)} style={[s.option, status === st && (st === "pending" ? s.optionSelectedWarn : s.optionSelected)]}>
+                    <MaterialCommunityIcons name={st === "paid" ? "check-circle-outline" : "clock-outline"} size={16} color={status === st ? "#fff" : C.muted} />
+                    <Text style={[s.optionText, status === st && s.optionTextSelected]}>{st === "paid" ? "Paid" : "Pending"}</Text>
+                  </Pressable>
+                ))}
+              </View>
             </>
           )}
 
@@ -1162,49 +1219,88 @@ function LocalBackupsModal({ backups, onCreate, onRestore, onDelete, requestConf
   );
 }
 
+type VendorTxn = { id: string; kind: "income" | "expense"; date: string; amount: number; label: string; due: number };
 function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expenses: Expense[]; onClose: () => void }) {
-  const map = new Map<string, { name: string; income: number; expense: number }>();
-  const bump = (rawName: string, incAmt: number, expAmt: number) => {
+  const [selected, setSelected] = useState<string | null>(null);
+  const map = new Map<string, { name: string; income: number; expense: number; pending: number; txns: VendorTxn[] }>();
+  const ensure = (rawName: string) => {
     const key = (rawName || "").trim() || "Unnamed";
-    const cur = map.get(key) || { name: key, income: 0, expense: 0 };
-    cur.income += incAmt; cur.expense += expAmt; map.set(key, cur);
+    const cur = map.get(key) || { name: key, income: 0, expense: 0, pending: 0, txns: [] };
+    map.set(key, cur);
+    return cur;
   };
-  incomes.forEach((r) => bump(r.name, r.amount, 0));
-  expenses.forEach((r) => bump(r.description, 0, r.amount + (r.repairAmount || 0)));
+  incomes.forEach((r) => {
+    const cur = ensure(r.name);
+    const due = dueOf(r);
+    cur.income += r.amount; cur.pending += due;
+    cur.txns.push({ id: r.id, kind: "income", date: r.date, amount: r.amount, label: describeRow(r), due });
+  });
+  expenses.forEach((r) => {
+    const cur = ensure(r.description);
+    const amt = expenseTotal(r); const due = expenseDue(r);
+    cur.expense += amt; cur.pending += due;
+    cur.txns.push({ id: r.id, kind: "expense", date: r.date, amount: amt, label: describeRow(r), due });
+  });
   const vendors = [...map.values()].sort((a, b) => (b.income + b.expense) - (a.income + a.expense));
+  const active = selected ? map.get(selected) : null;
   return (
     <Modal animationType="slide" transparent visible onRequestClose={onClose}>
       <View style={s.modalWrap}>
         <View style={s.sheet}>
           <View style={s.sheetHandle} />
           <View style={[s.formHead, s.detailHeaderPad]}>
-            <View>
-              <Text style={s.detailOverline}>TRANSACTION TOTALS</Text>
-              <Text style={s.formTitle}>Vendors</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+              {active && <Pressable testID="vendor-detail-back" hitSlop={10} onPress={() => setSelected(null)} style={{ marginRight: 10 }}><MaterialCommunityIcons name="arrow-left" size={22} color={C.ink} /></Pressable>}
+              <View style={{ flex: 1 }}>
+                <Text style={s.detailOverline}>{active ? "VENDOR HISTORY" : "TRANSACTION TOTALS"}</Text>
+                <Text style={s.formTitle} numberOfLines={1}>{active ? active.name : "Vendors"}</Text>
+              </View>
             </View>
             <Pressable testID="vendors-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
           </View>
-          <ScrollView testID="vendors-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
-            {vendors.length === 0 ? (
-              <View style={s.empty}>
-                <MaterialCommunityIcons name="account-search-outline" size={30} color={C.action} />
-                <Text style={s.emptyTitle}>No vendors yet</Text>
-                <Text style={s.emptyCopy}>Add income or expenses with a name to see totals.</Text>
+          {active ? (
+            <ScrollView testID="vendor-detail-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
+              <View style={s.detailSummary}>
+                <View><Text style={s.panelLabel}>INCOME</Text><Text style={[s.smallAmount, { color: C.income }]}>{money(active.income)}</Text></View>
+                <View><Text style={s.panelLabel}>EXPENSE</Text><Text style={[s.smallAmount, { color: C.expense }]}>{money(active.expense)}</Text></View>
+                <View><Text style={s.panelLabel}>PENDING</Text><Text style={[s.smallAmount, { color: C.action }]}>{money(active.pending)}</Text></View>
               </View>
-            ) : vendors.map((v) => (
-              <View key={v.name} testID="vendor-row" style={s.vendorRow}>
-                <View style={s.detailRowMain}>
-                  <Text style={s.detailRowTitle}>{v.name}</Text>
-                  <Text style={s.reminderMeta}>Net {money(v.income - v.expense)}</Text>
+              <Text style={s.detailSectionLabel}>{active.txns.length} TRANSACTION{active.txns.length === 1 ? "" : "S"}</Text>
+              {[...active.txns].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((t) => (
+                <View key={t.id} testID="vendor-txn-row" style={s.detailRow}>
+                  <View style={s.detailRowMain}>
+                    <Text style={s.detailRowTitle}>{t.label}</Text>
+                    <Text style={s.reminderMeta}>{displayDate(t.date)}{t.due > 0.009 ? ` · due ${money(t.due)}` : ""}</Text>
+                  </View>
+                  <Text style={[s.detailAmount, { color: t.kind === "income" ? C.income : C.expense }]}>{t.kind === "income" ? "+ " : "− "}{money(t.amount)}</Text>
                 </View>
-                <View style={s.vendorTotals}>
-                  <Text style={s.vendorIncome} testID="vendor-income">+ {money(v.income)}</Text>
-                  <Text style={s.vendorExpense} testID="vendor-expense">− {money(v.expense)}</Text>
+              ))}
+              <View style={{ height: 30 }} />
+            </ScrollView>
+          ) : (
+            <ScrollView testID="vendors-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
+              {vendors.length === 0 ? (
+                <View style={s.empty}>
+                  <MaterialCommunityIcons name="account-search-outline" size={30} color={C.action} />
+                  <Text style={s.emptyTitle}>No vendors yet</Text>
+                  <Text style={s.emptyCopy}>Add income or expenses with a name to see totals.</Text>
                 </View>
-              </View>
-            ))}
-            <View style={{ height: 30 }} />
-          </ScrollView>
+              ) : vendors.map((v) => (
+                <Pressable key={v.name} testID="vendor-row" onPress={() => setSelected(v.name)} style={s.vendorRow}>
+                  <View style={s.detailRowMain}>
+                    <Text style={s.detailRowTitle}>{v.name}</Text>
+                    <Text style={s.reminderMeta}>{v.txns.length} txn{v.txns.length === 1 ? "" : "s"} · Net {money(v.income - v.expense)}{v.pending > 0.009 ? ` · ${money(v.pending)} pending` : ""}</Text>
+                  </View>
+                  <View style={s.vendorTotals}>
+                    <Text style={s.vendorIncome} testID="vendor-income">+ {money(v.income)}</Text>
+                    <Text style={s.vendorExpense} testID="vendor-expense">− {money(v.expense)}</Text>
+                  </View>
+                  <MaterialCommunityIcons name="chevron-right" size={18} color={C.line} />
+                </Pressable>
+              ))}
+              <View style={{ height: 30 }} />
+            </ScrollView>
+          )}
         </View>
       </View>
     </Modal>
@@ -1456,6 +1552,19 @@ const s = StyleSheet.create({
   vendorTotals: { alignItems: "flex-end", gap: 3 },
   vendorIncome: { color: C.income, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 13, fontWeight: "800" },
   vendorExpense: { color: C.expense, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 13, fontWeight: "800" },
+  breakdownCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 12, marginBottom: 12 },
+  breakdownHeadRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
+  breakdownTitle: { fontSize: 10, letterSpacing: 1, fontWeight: "800", color: C.muted },
+  breakdownLegend: { flexDirection: "row", gap: 10 },
+  breakdownLegendReceived: { fontSize: 9, fontWeight: "800", color: C.income },
+  breakdownLegendPending: { fontSize: 9, fontWeight: "800", color: C.action },
+  breakdownRow: { flexDirection: "row", alignItems: "center", paddingVertical: 7, borderTopWidth: 1, borderTopColor: C.line },
+  breakdownCatCol: { flex: 1 },
+  breakdownCat: { fontSize: 13, fontWeight: "700", color: C.ink },
+  breakdownCount: { fontSize: 11, color: C.muted, marginTop: 1 },
+  breakdownReceived: { width: 100, textAlign: "right", color: C.income, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 12, fontWeight: "800" },
+  breakdownPending: { width: 100, textAlign: "right", color: C.action, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 12, fontWeight: "800" },
+
   payRow: { flexDirection: "row", gap: 8, marginTop: 8 },
   payAdd: { minWidth: 72, paddingHorizontal: 16, backgroundColor: C.forest, alignItems: "center", justifyContent: "center", borderRadius: 4 },
   settleBtn: { marginTop: 10, minHeight: 44, borderRadius: 8, borderWidth: 1, borderColor: C.forest, alignItems: "center", justifyContent: "center" },

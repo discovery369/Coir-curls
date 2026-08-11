@@ -1,0 +1,36 @@
+{
+  "summary": "Frontend-only verification at 390x844 for the newest-first sort + Category Breakdown + Expense PAID/PENDING status + Vendor Drill-Down round. ALL 5 targeted flows PASS with no console errors and no red screens. (1) NEWEST-FIRST INCOME: added 3 income records at days 5, 15, 25 of the current month (Coir Pith paid ₹10,000; Coir Bale pending ₹25,000; Coir Pith pending ₹5,000). Income ledger renders in order 25 Aug → 15 Aug → 05 Aug (newest first). (2) NEWEST-FIRST EXPENSES + PAID/PENDING BADGE: added 4 expenses across all categories (Salaries paid ₹8,000 day 3; Current bill pending ₹3,000 day 20; Maintenance paid ₹1,500 day 10; Husk pending ₹6,000 day 28). Expense ledger renders 28→20→10→03 (newest first). Each row has a data-testid=\"expense-status-badge\" showing PAID or PENDING correctly (4 badges: 2 PENDING, 2 PAID). expense-status-paid / expense-status-pending selectors work in RecordForm. (3) INCOME CATEGORY BREAKDOWN: [data-testid=\"income-category-breakdown\"] renders with title 'PITH & BALE TOTALS'. Values verified: breakdown-received-coir-pith=₹10,000.00, breakdown-pending-coir-pith=₹5,000.00, breakdown-received-coir-bale=₹0.00, breakdown-pending-coir-bale=₹25,000.00 — matches expected math. (4) EXPENSE CATEGORY BREAKDOWN: [data-testid=\"expense-category-breakdown\"] renders with title 'CATEGORY TOTALS'. Values verified: breakdown-received-salaries=₹8,000/pending=₹0; breakdown-received-current-bill=₹0/pending=₹3,000; breakdown-received-maintenance=₹1,500/pending=₹0; breakdown-received-husk=₹0/pending=₹6,000 — matches expected math. Note testIDs use 'received-' prefix even for expenses (functionally correct, since the underlying variable represents the PAID amount for expenses; the visible legend correctly says 'PAID'). (5) VENDOR DRILL-DOWN: Settings > open-vendors-button opens vendors-modal listing 7 vendor-row entries (3 income buyers + 4 expense descriptions). Tapping a vendor-row opens vendor-detail-modal showing INCOME/EXPENSE/PENDING summary and the correct 1 vendor-txn-row (e.g., Beta Buyers → 'Coir Bale · Beta Buyers, 25 Aug 2026 · due ₹25,000.00, +₹25,000.00'). vendor-detail-back is present and successfully returns to the vendor list. Vendor detail transactions are sorted newest-first (verified in source at index.tsx:1269). (6) REGRESSION: 3 record-edit-button + 3 record-delete-button rows render in income; tapping edit reopens RecordForm prefilled (record-save-button visible). No page/console errors during the full session.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_9.json",
+    "/app/test_reports/ui/iter9_income.jpeg",
+    "/app/test_reports/ui/iter9_expenses.jpeg",
+    "/app/test_reports/ui/iter9_vendors.jpeg"
+  ],
+  "action_items": [
+    "NAMING (P3, non-blocking): CategoryBreakdown re-uses the testID prefix 'breakdown-received-<cat>' for both Income (which visually labels it 'RECEIVED') and Expenses (which visually labels it 'PAID'). The rendered values are correct, but a future rename to 'breakdown-paid-<cat>' for expenses would make selectors more self-documenting. Reference: /app/frontend/app/index.tsx:489.",
+    "REFACTOR (P1, carried from earlier iterations): /app/frontend/app/index.tsx is now 1595 lines. Split into components/ and utils/ as previously noted. Non-blocking.",
+    "MINOR UX (P3): VendorsModal aggregates by both income name AND expense description, so a payroll line like 'Ravi Salary' appears as a vendor alongside customer names. Consider separating the sheet into 'Customers' vs 'Vendors' tabs, or at least filtering out expense-only entries whose description looks like a person/employee. Reference: /app/frontend/app/index.tsx:1223-1244."
+  ],
+  "critical_code_review_comments": [
+    "Sort is correctly applied in three places: Ledger.filtered (index.tsx:388), Vendor detail (index.tsx:1269), and reminders overdue list — all use new Date(b.date) - new Date(a.date). Consistent.",
+    "CategoryBreakdown correctly filters out empty categories via .filter((d) => d.count > 0), so unused categories do not show ₹0/₹0 rows. Good.",
+    "For expenses, CategoryBreakdown reuses expenseTotal()+expenseDue() — this means maintenance repairAmount is included in the totals (correct behaviour).",
+    "expense-status-badge is a plain View (not a Pressable), unlike income-status-toggle which is tappable and opens payment-modal. This is intentional per the current spec (expenses have a simple binary paid/pending set at creation), but consider if partial-pay for expenses is a future need.",
+    "VendorsModal builds map each render (no memoisation). Fine for typical dataset sizes but wrap in useMemo when the list grows past a few hundred entries.",
+    "File size: /app/frontend/app/index.tsx is 1595 lines (>700 threshold). Refactor pending (carried)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% (5/5 targeted flows + edit/delete regression pass)"},
+  "seed_data_creation": "Session-only AsyncStorage/localStorage seed cleared at run start. Then created 3 incomes (Alpha Traders Coir Pith ₹10k paid day 5; Beta Buyers Coir Bale ₹25k pending day 25; Gamma Corp Coir Pith ₹5k pending day 15) and 4 expenses (Ravi Salary ₹8k paid day 3; Feb Bill ₹3k pending day 20; Motor Repair ₹1.5k paid day 10; Batch A Husk ₹6k pending day 28) in the current month.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview: https://profit-calculator-111.preview.emergentagent.com. Viewport 390x844. Storage is per-browser-context via AsyncStorage → localStorage on web; call window.localStorage.clear() + reload to start fresh. Key testIDs added in this round: income-category-breakdown, expense-category-breakdown, breakdown-received-<cat-slug>, breakdown-pending-<cat-slug> (note: 'received' prefix is used for both income RECEIVED and expense PAID), expense-status-badge, expense-status-paid, expense-status-pending, vendor-row, vendor-detail-modal, vendor-detail-back, vendor-txn-row. RN-web Pressable inside modals sometimes swallows plain Playwright clicks — use the pointerdown/mousedown/pointerup/mouseup/click dispatch pattern shown in this iteration's script. Date picker (dp-day-N) needs to be opened before choosing product, or the product press deselects nothing but keep flow linear: date → product → name → status → amount → save.",
+  "rca_of_issue": "N/A — verification round; all specified features pass with no defects."
+}
