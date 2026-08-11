@@ -27,6 +27,38 @@ const dueOf = (r: Income) => { const paid = paidSum(r); if (paid > 0) return Mat
 const hasDue = (r: Income) => dueOf(r) > 0.009;
 const isSameDay = (a: Date | null, b: Date) => !!a && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const daysSince = (iso: string) => Math.floor((startOfDay(new Date()).getTime() - startOfDay(new Date(iso)).getTime()) / 86400000);
+const toNum = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+const toStr = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
+const toIso = (v: unknown) => { const d = new Date(toStr(v)); return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString(); };
+const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const EXPENSE_CATS = ["Salaries", "Current bill", "Maintenance", "Husk"];
+const sanitizeIncome = (r: Record<string, unknown>): Income => ({
+  id: toStr(r.id) || genId(),
+  date: toIso(r.date),
+  product: r.product === "Coir Bale" ? "Coir Bale" : "Coir Pith",
+  amount: toNum(r.amount),
+  name: toStr(r.name),
+  address: toStr(r.address),
+  status: r.status === "pending" ? "pending" : "paid",
+  tons: toNum(r.tons),
+  costPerTon: toNum(r.costPerTon),
+  payments: Array.isArray(r.payments) ? (r.payments as Record<string, unknown>[]).map((p) => ({ id: toStr(p?.id) || genId(), date: toIso(p?.date), amount: toNum(p?.amount) })) : [],
+});
+const sanitizeExpense = (r: Record<string, unknown>): Expense => ({
+  id: toStr(r.id) || genId(),
+  date: toIso(r.date),
+  category: (EXPENSE_CATS.includes(r.category as string) ? r.category : "Maintenance") as Expense["category"],
+  amount: toNum(r.amount),
+  repairAmount: toNum(r.repairAmount),
+  description: toStr(r.description),
+  costPerTon: toNum(r.costPerTon),
+  totalWeight: toNum(r.totalWeight),
+  loads: toNum(r.loads),
+  loadWeight: toNum(r.loadWeight),
+  coirOutput: toNum(r.coirOutput),
+  pithOutput: toNum(r.pithOutput),
+  trips: toNum(r.trips),
+});
 
 export default function Index() {
   const [incomes, setIncomes] = useState<Income[]>([]);
@@ -886,12 +918,14 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onRestore, requ
       const asset = res.assets[0];
       const content = Platform.OS === "web" ? await (await fetch(asset.uri)).text() : await FileSystem.readAsStringAsync(asset.uri);
       const parsed = JSON.parse(content);
-      if (!Array.isArray(parsed.incomes) || !Array.isArray(parsed.expenses)) { setNotice("That file is not a SVKD COIR backup."); return; }
+      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.incomes) || !Array.isArray(parsed.expenses)) { setNotice("That file is not a SVKD COIR backup."); return; }
+      const incs = (parsed.incomes as unknown[]).map((x) => sanitizeIncome((x || {}) as Record<string, unknown>));
+      const exps = (parsed.expenses as unknown[]).map((x) => sanitizeExpense((x || {}) as Record<string, unknown>));
       requestConfirm({
         title: "Restore this backup?",
-        message: `This replaces your current data with ${parsed.incomes.length} income and ${parsed.expenses.length} expense records.`,
+        message: `This replaces your current data with ${incs.length} income and ${exps.length} expense records.`,
         confirmLabel: "Restore",
-        onConfirm: () => { onRestore(parsed.incomes, parsed.expenses); setNotice("Records restored successfully."); },
+        onConfirm: () => { onRestore(incs, exps); setNotice("Records restored successfully."); },
       });
     } catch { setNotice("Could not read that file."); }
   };
@@ -1032,7 +1066,7 @@ function ProductInsights({ incomes, scope }: { incomes: Income[]; scope: string 
   );
 }
 
-const escapeHtml = (v: unknown) => String(v ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+const escapeHtml = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 const pdfStyle = `* { box-sizing: border-box; } body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1F2924; padding: 28px; } h1 { font-size: 22px; margin: 0; } .sub { color: #59635C; font-size: 12px; margin: 4px 0 20px; } .cards { display: flex; gap: 12px; margin-bottom: 22px; } .card { flex: 1; border: 1px solid #D8D1C4; border-radius: 8px; padding: 12px 14px; } .card .k { font-size: 10px; letter-spacing: 1px; color: #59635C; text-transform: uppercase; } .card .v { font-size: 18px; font-weight: 700; margin-top: 6px; } .inc { color: #2F7D57; } .exp { color: #B65A43; } h2 { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #C76B35; margin: 22px 0 8px; } table { width: 100%; border-collapse: collapse; font-size: 12px; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #E6DFD2; } th { background: #F0E9DC; font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: #59635C; } td.amt, th.amt { text-align: right; font-variant-numeric: tabular-nums; } td.empty { text-align: center; color: #9DA49D; font-style: italic; } tfoot td { font-weight: 700; border-top: 2px solid #1F2924; } .foot { margin-top: 26px; font-size: 10px; color: #9DA49D; }`;
 
 function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totIn: number, totEx: number) {
@@ -1062,7 +1096,7 @@ function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totI
 
 function buildCustomerHTML(name: string, records: Income[], total: number, pending: number) {
   const sorted = [...records].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  const rows = sorted.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.product)}</td><td>${r.tons ? `${r.tons}t @ ₹${r.costPerTon}/t` : "—"}</td><td>${dueOf(r) > 0 ? `Due ${money(dueOf(r))}` : "Paid"}</td><td class="amt">${escapeHtml(money(r.amount))}</td></tr>`).join("");
+  const rows = sorted.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.product)}</td><td>${r.tons ? escapeHtml(`${r.tons}t @ ₹${r.costPerTon}/t`) : "—"}</td><td>${dueOf(r) > 0 ? `Due ${escapeHtml(money(dueOf(r)))}` : "Paid"}</td><td class="amt">${escapeHtml(money(r.amount))}</td></tr>`).join("");
   return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
     <h1>Statement · ${escapeHtml(name)}</h1>
     <div class="sub">SVKD COIR · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>

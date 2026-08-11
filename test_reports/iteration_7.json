@@ -1,0 +1,32 @@
+{
+  "summary": "Frontend-only regression at 390x844 for the SECURITY FIX round (Restore sanitize + PDF HTML escaping). ALL 4 targeted flows + 6 regression sub-flows PASS with no crashes and no console/page errors. (1) Add income Ravi Traders 5t x ₹2000 auto-calculates ₹10,000.00 and status Pending — appears in Income ledger, dashboard-total-income = ₹10,000.00, and outstanding-pill visible. (2) Settings > backup-button copies JSON to clipboard on web and shows settings-notice 'Backup copied to clipboard. Paste and save it somewhere safe.' — no crash. (3) Settings > restore-button opens the DocumentPicker; cancelling (empty file chooser) does NOT crash the app — restore-button remains mounted and Settings screen is still interactive. (4) Customer statement PDF via open-customers-button > customer-statement-button generates without crashing (window.print stubbed to avoid dialog) and customers-modal/app remain healthy afterwards. REGRESSION suite green: part-payment via income-status-toggle > payment-modal reduces due from ₹10,000.00 to ₹6,000.00 after adding ₹4,000, payment-settle-button drives due to ₹0.00; badge shows PAID/PART PAID/PENDING; outstanding-pill reflects remaining due; Calendar Month view shows product-insights + export-month-button; calendar-day-row opens day-detail-modal; calendar-mode-year renders yearly-overview; data persists across full page reload (dashboard-total-income = ₹10,000.00 after reload). sanitizeIncome/sanitizeExpense are wired into doRestore (lines 922-923) and escapeHtml (line 1069) now escapes &<>\"' and is applied to r.tons/r.costPerTon interpolations in buildCustomerHTML (line 1099) as well as all user text in both PDF builders. Security fix verified NOT to have broken any normal behaviour.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_7.json",
+    "/app/test_reports/ui/iter7_final.jpeg"
+  ],
+  "action_items": [
+    "REFACTOR (P1, carried from iteration_6): /app/frontend/app/index.tsx is 1295+ lines. Split into components/ (RecordForm, PaymentModal, CalendarView, YearOverview, DayDetailModal, RemindersModal, CustomersModal, Settings, Ledger, Filters, ConfirmModal, DatePickerModal, ProductInsights) and utils/pdf.ts (escapeHtml, buildMonthHTML, buildCustomerHTML, sanitizeIncome, sanitizeExpense). Non-blocking for this release.",
+    "SECURITY (P2, minor hardening beyond the current fix): sanitizeIncome coerces r.amount via Number(); on restore the imported amount is trusted as-is even if payments[] would recompute to a different sum. Consider clamping negative amounts to 0 and capping payments[] sum to the record amount to prevent poisoned backup files from creating negative dueOf() or nonsensical PAID states. Reference: /app/frontend/app/index.tsx:35-46.",
+    "SECURITY (P3): escapeHtml already handles & < > \" '. If any future PDF template introduces attribute-context injection via a URL/style, consider a dedicated escapeAttr helper (current usage is text-content only, so this is a future-proofing note, not a defect)."
+  ],
+  "critical_code_review_comments": [
+    "sanitizeIncome/sanitizeExpense correctly coerce numbers with Number(), whitelist product/category/status, and rebuild payments[] with genId/toIso — good. However, no upper-bound sanity check on tons/costPerTon/amount; a malicious backup could set amount = Number.MAX_SAFE_INTEGER and render a huge string in the UI. Non-critical but worth clamping.",
+    "buildCustomerHTML now escapes r.tons and r.costPerTon via escapeHtml(`${r.tons}t @ ₹${r.costPerTon}/t`) — since those values are numeric after sanitizeIncome (Number-coerced) the injection surface is closed. escapeHtml also correctly handles quotes now.",
+    "doRestore's JSON.parse is wrapped in try/catch and returns early on shape mismatch — good. It also does not persist the sanitized data until the user confirms via requestConfirm — correct UX.",
+    "Carried-over: /app/frontend/app/index.tsx is 1295+ lines; refactor pending."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% (10/10 checks pass; add-income, backup, restore-cancel, customer-statement PDF, part-payment reduce, settle, calendar month + product-insights + export button, day-detail-modal, yearly-overview, persistence across reload)"},
+  "seed_data_creation": "Session-only AsyncStorage seed: 1 income 'Ravi Traders' Coir Pith 5t × ₹2000 = ₹10,000 (initially Pending, then part-paid ₹4,000, then settled to ₹0 due during regression). Cleared naturally on next fresh browser context.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Public preview: https://profit-calculator-111.preview.emergentagent.com. Viewport 390x844. Automation tip: use el.dispatchEvent(pointerdown/pointerup/mousedown/mouseup/click) via page.evaluate for RN-web Pressables in sheets — plain page.click(force=True) is unreliable. Stub window.print with `await page.evaluate('window.print=()=>{}')` before tapping customer-statement-button / export-month-button so print dialog doesn't hang the harness. For DocumentPicker restore: `page.once('filechooser', lambda fc: asyncio.create_task(fc.set_files([])))` cleanly cancels the picker. AsyncStorage is per browser context — seed in the same run. Security fix verified end-to-end; no regressions detected.",
+  "rca_of_issue": "N/A — verification round, no defects found."
+}
