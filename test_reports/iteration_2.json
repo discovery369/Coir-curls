@@ -1,0 +1,26 @@
+{
+  "summary": "Frontend-only mobile retest: dashboard and calendar loaded, calendar month controls worked, but income/expense creation remained blocked because the modal Save control is outside the 390x844 viewport.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "RecordForm modal", "issue": "At 390x844, record-save-button remains outside the viewport after opening Add income and filling the amount; Playwright cannot tap it even with force=True.", "testID": "record-save-button", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Income/expense creation", "issue": "Could not save records, so Husk auto amount, manual override, totals, and persistence after save could not be verified in this retest.", "affected_testIDs": ["add-income-button", "add-expense-button", "record-amount-input", "record-save-button"]}
+    ],
+    "design_issues": [
+      {"screen": "Record form", "issues": ["The lower form controls are still unreachable on the required mobile viewport despite the inner ScrollView; modal height/scroll container needs a bounded mobile layout and reliable scrolling."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_2.json", "/app/frontend/app/index.tsx"],
+  "action_items": ["Fix RecordForm mobile layout so the ScrollView can scroll to record-save-button at 390x844, then rerun all creation, Husk calculation, override, totals, and persistence checks."],
+  "critical_code_review_comments": ["The form uses a ScrollView, but the live web preview still reports the Save control outside the viewport; verify bounded sheet height and scroll behavior rather than only adding ScrollView.", "Delete Alert actions and several option controls still lack the requested dedicated testIDs."],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (frontend-only request)", "frontend": "35%"},
+  "seed_data_creation": "No records created because Save was unreachable.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Public preview tested at 390x844. Dashboard loaded and Calendar tab rendered August 2026; previous and next month controls both worked. Add income opened, but record-save-button was outside viewport after amount entry.",
+  "rca_of_issue": "Reproduction: open Add income at 390x844, fill record-amount-input, tap record-save-button. Playwright resolves the button but reports it outside viewport after attempted scrolling. The modal sheet is bottom-aligned and its effective scroll region does not expose the lower controls in the web preview; likely missing bounded max height/flex scroll sizing or safe-area handling."
+}
