@@ -24,6 +24,7 @@ Build a mobile app with Income and Expense tables. Income records contain Date, 
 - 2026-08-11: Added device-local AsyncStorage hydration and persistence, native date selection, product/category choices, decimal validation, add/edit/delete flows, delete confirmation, and settings information.
 - 2026-08-11: Added mobile-safe keyboard-aware scrollable record sheet, accessible test IDs, empty states, dark bottom navigation, and warm ledger visual system.
 - 2026-08-11: Extended income records with name and address; extended expenses with repair amount and description. Repair amounts are included in total expenses and net balance, and details remain editable locally.
+- 2026-08-11: Added Husk as an expense category with per-order load count, approximate tons per load, live coir/pith output (25%/75%), cost per ton, and total weight tracking. Expense rows show the per-ton and weight context when available.
 - 2026-08-11: Verified Expo preview at 390x844, including adding income and expense records. Lint and TypeScript checks pass.
 
 ## Prioritized backlog
