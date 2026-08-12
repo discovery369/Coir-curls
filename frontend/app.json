@@ -10,7 +10,11 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.profitcalculator.wx9pdf"
+      "bundleIdentifier": "com.emergent.profitcalculator.wx9pdf",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Capture a photo of a bill or receipt",
+        "NSPhotoLibraryUsageDescription": "Attach a receipt photo from your gallery"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +22,8 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.profitcalculator.wx9pdf"
+      "package": "com.emergent.profitcalculator.wx9pdf",
+      "permissions": ["android.permission.CAMERA"]
     },
     "web": {
       "bundler": "metro",
@@ -27,6 +32,13 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Attach a receipt photo from your gallery",
+          "cameraPermission": "Capture a photo of a bill or receipt"
+        }
+      ],
       [
         "expo-splash-screen",
         {

@@ -2,14 +2,15 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as DocumentPicker from "expo-document-picker";
 import * as FileSystem from "expo-file-system/legacy";
+import * as ImagePicker from "expo-image-picker";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { useEffect, useMemo, useState } from "react";
-import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 type Payment = { id: string; date: string; amount: number };
-type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; phone?: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[] };
-type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Diesel" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending" };
+type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; phone?: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[]; photo?: string };
+type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Diesel" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending"; photo?: string };
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
 type Backup = { id: string; createdAt: string; incomes: Income[]; expenses: Expense[] };
 
@@ -58,6 +59,7 @@ const sanitizeIncome = (r: Record<string, unknown>): Income => ({
   tons: toNum(r.tons),
   costPerTon: toNum(r.costPerTon),
   payments: Array.isArray(r.payments) ? (r.payments as Record<string, unknown>[]).map((p) => ({ id: toStr(p?.id) || genId(), date: toIso(p?.date), amount: toNum(p?.amount) })) : [],
+  photo: toStr(r.photo),
 });
 const sanitizeExpense = (r: Record<string, unknown>): Expense => ({
   id: toStr(r.id) || genId(),
@@ -74,6 +76,7 @@ const sanitizeExpense = (r: Record<string, unknown>): Expense => ({
   pithOutput: toNum(r.pithOutput),
   trips: toNum(r.trips),
   status: r.status === "pending" ? "pending" : "paid",
+  photo: toStr(r.photo),
 });
 
 export default function Index() {
@@ -94,6 +97,7 @@ export default function Index() {
   const [backups, setBackups] = useState<Backup[]>([]);
   const [backupsReady, setBackupsReady] = useState(false);
   const [showVendors, setShowVendors] = useState(false);
+  const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
   const nameOptions = useMemo(() => Array.from(new Set(incomes.map((i) => i.name).filter(Boolean))), [incomes]);
   const addressOptions = useMemo(() => Array.from(new Set(incomes.map((i) => i.address).filter(Boolean))), [incomes]);
   const expenseNameOptions = useMemo(() => Array.from(new Set(expenses.map((e) => e.description).filter(Boolean))), [expenses]);
@@ -215,8 +219,8 @@ export default function Index() {
 
             <Filters query={query} setQuery={setQuery} dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} />
 
-            {(tab === "overview" || tab === "income") && <Ledger kind="income" rows={incomes} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("income")} onEdit={(id) => open("income", id)} onDelete={remove} onOpenPayment={(id) => setPaying(id)} />}
-            {(tab === "overview" || tab === "expenses") && <Ledger kind="expense" rows={expenses} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("expense")} onEdit={(id) => open("expense", id)} onDelete={remove} />}
+            {(tab === "overview" || tab === "income") && <Ledger kind="income" rows={incomes} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("income")} onEdit={(id) => open("income", id)} onDelete={remove} onOpenPayment={(id) => setPaying(id)} onViewPhoto={setViewingPhoto} />}
+            {(tab === "overview" || tab === "expenses") && <Ledger kind="expense" rows={expenses} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("expense")} onEdit={(id) => open("expense", id)} onDelete={remove} onViewPhoto={setViewingPhoto} />}
           </>
         )}
       </ScrollView>
@@ -262,6 +266,7 @@ export default function Index() {
       {showReminders && <RemindersModal incomes={incomes} expenses={expenses} overdueDays={overdueDays} setOverdueDays={setOverdueDays} onSettle={settleIncome} onSettleExpense={settleExpense} onOpenPayment={(id) => { setShowReminders(false); setPaying(id); }} onClose={() => setShowReminders(false)} />}
       {showBackups && <LocalBackupsModal backups={backups} onCreate={createBackup} onRestore={restoreBackup} onDelete={deleteBackup} requestConfirm={setConfirm} onClose={() => setShowBackups(false)} />}
       {showVendors && <VendorsModal incomes={incomes} expenses={expenses} onClose={() => setShowVendors(false)} />}
+      {viewingPhoto && <PhotoViewerModal uri={viewingPhoto} onClose={() => setViewingPhoto(null)} />}
       {showCustomers && <CustomersModal incomes={incomes} onClose={() => setShowCustomers(false)} />}
       {payingRecord && <PaymentModal record={payingRecord} onChange={updateIncome} onClose={() => setPaying(null)} />}
 
@@ -360,6 +365,94 @@ function SuggestInput({ testID, value, onChangeText, placeholder, suggestions }:
   );
 }
 
+function PhotoAttach({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [blocked, setBlocked] = useState<"" | "camera" | "gallery">("");
+  const [busy, setBusy] = useState(false);
+
+  const pick = async (source: "camera" | "gallery") => {
+    if (busy) return;
+    setBusy(true);
+    setBlocked("");
+    try {
+      if (source === "camera") {
+        const cur = await ImagePicker.getCameraPermissionsAsync();
+        let status = cur.status;
+        if (status !== "granted") {
+          if (!cur.canAskAgain) { setBlocked("camera"); return; }
+          const req = await ImagePicker.requestCameraPermissionsAsync();
+          status = req.status;
+          if (status !== "granted") { if (!req.canAskAgain) setBlocked("camera"); return; }
+        }
+        const res = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.5, base64: true, allowsEditing: true });
+        if (!res.canceled && res.assets?.[0]?.base64) onChange(`data:image/jpeg;base64,${res.assets[0].base64}`);
+      } else {
+        const cur = await ImagePicker.getMediaLibraryPermissionsAsync();
+        let status = cur.status;
+        if (status !== "granted") {
+          if (!cur.canAskAgain) { setBlocked("gallery"); return; }
+          const req = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          status = req.status;
+          if (status !== "granted") { if (!req.canAskAgain) setBlocked("gallery"); return; }
+        }
+        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.5, base64: true, allowsEditing: true });
+        if (!res.canceled && res.assets?.[0]?.base64) onChange(`data:image/jpeg;base64,${res.assets[0].base64}`);
+      }
+    } catch { /* cancelled or unavailable */ } finally { setBusy(false); }
+  };
+
+  return (
+    <View>
+      <Text style={s.inputLabel}>PHOTO / RECEIPT (OPTIONAL)</Text>
+      {value ? (
+        <View testID="photo-preview" style={s.photoPreviewWrap}>
+          <Image source={{ uri: value }} style={s.photoPreview} resizeMode="cover" />
+          <Pressable testID="photo-remove-button" onPress={() => onChange("")} style={s.photoRemove}>
+            <MaterialCommunityIcons name="close" size={16} color="#fff" />
+          </Pressable>
+          <Pressable testID="photo-replace-button" onPress={() => pick("gallery")} style={s.photoReplace}>
+            <MaterialCommunityIcons name="image-edit-outline" size={15} color={C.forest} />
+            <Text style={s.photoReplaceText}>Replace</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View style={s.photoButtons}>
+          <Pressable testID="photo-camera-button" onPress={() => pick("camera")} disabled={busy} style={s.photoBtn}>
+            <MaterialCommunityIcons name="camera-outline" size={19} color={C.forest} />
+            <Text style={s.photoBtnText}>Take photo</Text>
+          </Pressable>
+          <Pressable testID="photo-gallery-button" onPress={() => pick("gallery")} disabled={busy} style={s.photoBtn}>
+            <MaterialCommunityIcons name="image-multiple-outline" size={19} color={C.forest} />
+            <Text style={s.photoBtnText}>Choose from gallery</Text>
+          </Pressable>
+        </View>
+      )}
+      {blocked ? (
+        <View testID="photo-permission-blocked" style={s.photoPermBox}>
+          <Text style={s.photoPermText}>{blocked === "camera" ? "Camera access is blocked." : "Gallery access is blocked."} Enable it in Settings to add a photo.</Text>
+          <Pressable testID="photo-open-settings" onPress={() => Linking.openSettings()} style={s.photoSettingsBtn}>
+            <MaterialCommunityIcons name="cog-outline" size={15} color="#fff" />
+            <Text style={s.photoSettingsText}>Open Settings</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function PhotoViewerModal({ uri, onClose }: { uri: string; onClose: () => void }) {
+  return (
+    <Modal animationType="fade" transparent visible onRequestClose={onClose}>
+      <Pressable testID="photo-viewer" style={s.photoViewerWrap} onPress={onClose}>
+        <Image source={{ uri }} style={s.photoViewerImage} resizeMode="contain" />
+        <Pressable testID="photo-viewer-close" onPress={onClose} style={s.photoViewerClose}>
+          <MaterialCommunityIcons name="close" size={26} color="#fff" />
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+
 function Filters({ query, setQuery, dateFrom, dateTo, setDateFrom, setDateTo }: { query: string; setQuery: (v: string) => void; dateFrom: Date | null; dateTo: Date | null; setDateFrom: (v: Date | null) => void; setDateTo: (v: Date | null) => void }) {
   const [picker, setPicker] = useState<null | "from" | "to">(null);
   return (
@@ -392,7 +485,7 @@ function Filters({ query, setQuery, dateFrom, dateTo, setDateFrom, setDateTo }: 
   );
 }
 
-function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, onOpenPayment }: { kind: "income" | "expense"; rows: (Income | Expense)[]; query: string; dateFrom: Date | null; dateTo: Date | null; onAdd: () => void; onEdit: (id: string) => void; onDelete: (kind: "income" | "expense", id: string) => void; onOpenPayment?: (id: string) => void }) {
+function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, onOpenPayment, onViewPhoto }: { kind: "income" | "expense"; rows: (Income | Expense)[]; query: string; dateFrom: Date | null; dateTo: Date | null; onAdd: () => void; onEdit: (id: string) => void; onDelete: (kind: "income" | "expense", id: string) => void; onOpenPayment?: (id: string) => void; onViewPhoto?: (uri: string) => void }) {
   const isIncome = kind === "income";
   const [chip, setChip] = useState("All");
   const [pendingOnly, setPendingOnly] = useState(false);
@@ -472,6 +565,12 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
                   <Text style={[s.badgeText, { color: due > 0 ? C.action : C.income }]}>{due > 0 ? "PENDING" : "PAID"}</Text>
                 </View>
               )}
+              {row.photo ? (
+                <Pressable testID="row-photo-thumb" onPress={() => onViewPhoto?.(row.photo as string)} style={s.rowPhotoWrap}>
+                  <Image source={{ uri: row.photo }} style={s.rowPhoto} resizeMode="cover" />
+                  <View style={s.rowPhotoBadge}><MaterialCommunityIcons name="magnify-plus-outline" size={11} color="#fff" /></View>
+                </Pressable>
+              ) : null}
             </View>
             <Text style={[s.rowText, s.amountCell, { color: isIncome ? C.income : C.expense }]}>{money(row.amount + ("repairAmount" in row ? row.repairAmount || 0 : 0))}</Text>
             <View style={s.rowActions}>
@@ -548,6 +647,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
   });
   const [showDate, setShowDate] = useState(false);
   const [error, setError] = useState("");
+  const [photo, setPhoto] = useState(record && "photo" in record && record.photo ? record.photo : "");
   const options = kind === "income" ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Current bill", "Maintenance", "Diesel", "Husk"];
   const isHusk = kind === "expense" && choice === "Husk";
   const tripCount = Math.max(0, Number(trips) || 0);
@@ -566,7 +666,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
     if (!amount || !Number.isFinite(value) || value <= 0) return setError("Amount must be greater than ₹0");
     const base = { id: record?.id || String(Date.now()), date: date.toISOString(), amount: value };
     onSave(kind === "income"
-      ? { ...base, product: choice as Income["product"], name: name.trim(), address: address.trim(), phone: phone.trim(), status, tons: Number(tons) || 0, costPerTon: Number(incomeCost) || 0 }
+      ? { ...base, product: choice as Income["product"], name: name.trim(), address: address.trim(), phone: phone.trim(), status, tons: Number(tons) || 0, costPerTon: Number(incomeCost) || 0, photo }
       : {
           ...base,
           category: choice as Expense["category"],
@@ -580,6 +680,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
           costPerTon: Number(costPerTrip) || 0,
           totalWeight: isHusk ? tripCount * TONS_PER_TRIP : 0,
           status,
+          photo,
         });
   };
 
@@ -671,6 +772,8 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
               </View>
             </>
           )}
+
+          <PhotoAttach value={photo} onChange={setPhoto} />
 
           <View style={s.amountModeRow}>
             <Text style={s.inputLabel}>{autoKind && !manualAmount ? "AMOUNT (AUTO)" : "AMOUNT"}</Text>
@@ -1606,6 +1709,25 @@ const s = StyleSheet.create({
   badgePart: { backgroundColor: "#E1ECF7", borderColor: "#B4CDE8" },
   badgePaid: { backgroundColor: "#E4F0E8", borderColor: "#B9D8C4" },
   badgeText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
+  photoButtons: { flexDirection: "row", gap: 10, marginTop: 4 },
+  photoBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 48, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.surface, paddingHorizontal: 6 },
+  photoBtnText: { color: C.forest, fontSize: 12, fontWeight: "700" },
+  photoPreviewWrap: { marginTop: 4, borderRadius: 10, overflow: "hidden", borderWidth: 1, borderColor: C.line, position: "relative" },
+  photoPreview: { width: "100%", height: 180, backgroundColor: "#EEE8DC" },
+  photoRemove: { position: "absolute", top: 8, right: 8, width: 30, height: 30, borderRadius: 15, backgroundColor: "rgba(31,41,36,0.72)", alignItems: "center", justifyContent: "center" },
+  photoReplace: { position: "absolute", bottom: 8, right: 8, flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "rgba(255,253,248,0.94)", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  photoReplaceText: { color: C.forest, fontSize: 12, fontWeight: "700" },
+  photoPermBox: { marginTop: 8, backgroundColor: "#FBECE7", borderRadius: 8, padding: 12, gap: 8 },
+  photoPermText: { color: C.expense, fontSize: 12, lineHeight: 17 },
+  photoSettingsBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, alignSelf: "flex-start", backgroundColor: C.expense, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
+  photoSettingsText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  rowPhotoWrap: { marginTop: 8, width: 52, height: 52, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: C.line, position: "relative" },
+  rowPhoto: { width: "100%", height: "100%", backgroundColor: "#EEE8DC" },
+  rowPhotoBadge: { position: "absolute", bottom: 0, right: 0, backgroundColor: "rgba(31,41,36,0.7)", padding: 2, borderTopLeftRadius: 6 },
+  photoViewerWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", alignItems: "center", justifyContent: "center" },
+  photoViewerImage: { width: "92%", height: "80%" },
+  photoViewerClose: { position: "absolute", top: 50, right: 20, width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
+
   empty: { padding: 25, alignItems: "center" },
   emptyTitle: { color: C.ink, fontWeight: "800", marginTop: 10 },
   emptyCopy: { color: C.muted, fontSize: 13, textAlign: "center", marginTop: 5 },

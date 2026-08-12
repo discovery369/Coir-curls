@@ -34,6 +34,12 @@ Small coir business owner/operator recording daily cash, tracking customer dues,
 ## Implemented (2026-06-12, batch 3)
 - Overview "Money Position" card: TO COLLECT (receivables) vs TO PAY (payables) with a net position line; tap opens Payment Reminders. Replaces the older outstanding pill.
 
+## Implemented (2026-06-12, batch 4)
+- Photo attachment on every income & expense entry via expo-image-picker: "Take photo" (camera) or "Choose from gallery", with in-form preview/replace/remove. Contextual permission handling (camera + media library) with an "Open Settings" fallback when blocked. Photo stored as base64 in the record; a thumbnail shows on the ledger row and opens a full-screen viewer on tap. app.json updated with iOS usage strings + Android CAMERA permission + expo-image-picker plugin.
+
+## Data Model additions
+- Income/Expense now include optional `photo` (base64 data URI).
+
 ## Testing
 - testing_agent iterations 3–11: all flows pass, no regressions. Latest: iteration_11 all green.
 
