@@ -32,7 +32,14 @@ Small coir business owner/operator recording daily cash, tracking customer dues,
 - Security hardening: restore input validated/coerced (sanitizeIncome/Expense); user text escaped in generated PDF HTML.
 
 ## Testing
-- testing_agent iterations 3–9: all flows pass, no regressions. Latest: iteration_9 all green (newest-first sort, category Received/Pending breakdown, expense Paid/Pending status, vendor drill-down).
+- testing_agent iterations 3–10: all flows pass, no regressions. Latest: iteration_10 all green.
+
+## Implemented (2026-06-12)
+- Customers vs Suppliers split in the contacts screen (Settings → "Customers & suppliers"): Customers built from income names, Suppliers from expense descriptions; each tappable to a drill-down history.
+- Per-entity PDF statement export + WhatsApp share inside every customer/supplier drill-down.
+- "Pending only" filter chip in both Income & Expense ledgers.
+- Category Trends card (Calendar → Month view): month-over-month growth per income product & expense category with up/down %.
+- Blue "PART PAID" badge for partly-paid income records.
 
 ## Implemented (2026-06-11, update)
 - Ledgers now sort newest date first (Income & Expenses).

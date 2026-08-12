@@ -13,7 +13,7 @@ type Expense = { id: string; date: string; category: "Salaries" | "Current bill"
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
 type Backup = { id: string; createdAt: string; incomes: Income[]; expenses: Expense[] };
 
-const C = { canvas: "#F5F0E7", surface: "#FFFDF8", ink: "#1F2924", muted: "#59635C", line: "#D8D1C4", forest: "#173C2C", income: "#2F7D57", expense: "#B65A43", action: "#C76B35", highlight: "#E8D5A7", nav: "#203029" };
+const C = { canvas: "#F5F0E7", surface: "#FFFDF8", ink: "#1F2924", muted: "#59635C", line: "#D8D1C4", forest: "#173C2C", income: "#2F7D57", expense: "#B65A43", action: "#C76B35", highlight: "#E8D5A7", nav: "#203029", blue: "#2F6FB0" };
 const STORAGE_KEY = "coir-ledger-records-v1";
 const BACKUPS_KEY = "svkd-coir-backups-v1";
 const TONS_PER_TRIP = 4; // each husk load ~4 tons -> 1 ton coir + 3 ton pith
@@ -31,6 +31,7 @@ const openWhatsApp = async (message: string, phone?: string) => {
 };
 const waStatement = (name: string, total: number, paid: number, due: number) => `Hello ${name || "there"},\n\nStatement from SVKD COIR:\nTotal purchased: ${money(total)}\nPaid: ${money(paid)}\nBalance due: ${money(due)}\n\nThank you for your business.`;
 const waReminder = (name: string, due: number, days: number) => `Hello ${name || "there"},\n\nGentle reminder from SVKD COIR: ${money(due)} is pending${days ? ` (${days} days)` : ""}. Kindly arrange payment at your convenience.\n\nThank you.`;
+const waSupplier = (name: string, total: number, due: number) => `Hello ${name || "there"},\n\nSupplier statement from SVKD COIR:\nTotal billed: ${money(total)}\nBalance to pay: ${money(due)}\n\nThank you.`;
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 const paidSum = (r: Income) => (r.payments || []).reduce((sum, p) => sum + p.amount, 0);
@@ -373,10 +374,12 @@ function Filters({ query, setQuery, dateFrom, dateTo, setDateFrom, setDateTo }: 
 function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, onOpenPayment }: { kind: "income" | "expense"; rows: (Income | Expense)[]; query: string; dateFrom: Date | null; dateTo: Date | null; onAdd: () => void; onEdit: (id: string) => void; onDelete: (kind: "income" | "expense", id: string) => void; onOpenPayment?: (id: string) => void }) {
   const isIncome = kind === "income";
   const [chip, setChip] = useState("All");
+  const [pendingOnly, setPendingOnly] = useState(false);
   const chips = isIncome ? ["All", "Coir Pith", "Coir Bale"] : ["All", "Salaries", "Current bill", "Maintenance", "Husk"];
 
   const filtered = rows.filter((row) => {
     if (chip !== "All") { const t = "product" in row ? row.product : row.category; if (t !== chip) return false; }
+    if (pendingOnly) { const due = "product" in row ? dueOf(row) : expenseDue(row); if (due <= 0.009) return false; }
     if (query.trim()) {
       const hay = ("product" in row ? `${row.product} ${row.name} ${row.address}` : `${row.category} ${row.description}`).toLowerCase();
       if (!hay.includes(query.trim().toLowerCase())) return false;
@@ -386,7 +389,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
     if (dateTo && d > endOfDay(dateTo)) return false;
     return true;
   }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const hasFilter = chip !== "All" || !!query.trim() || !!dateFrom || !!dateTo;
+  const hasFilter = chip !== "All" || pendingOnly || !!query.trim() || !!dateFrom || !!dateTo;
 
   return (
     <View testID={`${kind}-table`} style={s.section}>
@@ -407,6 +410,10 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
             <Text style={[s.chipText, chip === c && s.chipTextSelected]}>{c}</Text>
           </Pressable>
         ))}
+        <Pressable testID={`${kind}-chip-pending-only`} onPress={() => setPendingOnly((v) => !v)} style={[s.chip, s.pendingChip, pendingOnly && s.pendingChipSelected]}>
+          <MaterialCommunityIcons name="clock-alert-outline" size={13} color={pendingOnly ? "#fff" : C.action} />
+          <Text style={[s.chipText, { color: pendingOnly ? "#fff" : C.action }]}>Pending only</Text>
+        </Pressable>
       </ScrollView>
 
       <CategoryBreakdown kind={kind} rows={filtered} />
@@ -434,9 +441,9 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
             <View style={s.cell}>
               <Text style={s.rowText} numberOfLines={2}>{describeRow(row)}</Text>
               {isIncome ? (
-                <Pressable testID="income-status-toggle" accessibilityRole="button" accessibilityLabel="Manage payments" hitSlop={10} onPress={() => onOpenPayment?.(row.id)} style={[s.badge, due > 0 ? s.badgePending : s.badgePaid]}>
-                  <MaterialCommunityIcons name={due > 0 ? "clock-outline" : "check-circle"} size={12} color={due > 0 ? C.action : C.income} />
-                  <Text style={[s.badgeText, { color: due > 0 ? C.action : C.income }]}>{badgeLabel}</Text>
+                <Pressable testID="income-status-toggle" accessibilityRole="button" accessibilityLabel="Manage payments" hitSlop={10} onPress={() => onOpenPayment?.(row.id)} style={[s.badge, partPaid ? s.badgePart : due > 0 ? s.badgePending : s.badgePaid]}>
+                  <MaterialCommunityIcons name={partPaid ? "circle-slice-5" : due > 0 ? "clock-outline" : "check-circle"} size={12} color={partPaid ? C.blue : due > 0 ? C.action : C.income} />
+                  <Text style={[s.badgeText, { color: partPaid ? C.blue : due > 0 ? C.action : C.income }]}>{badgeLabel}</Text>
                 </Pressable>
               ) : (
                 <View testID="expense-status-badge" style={[s.badge, due > 0 ? s.badgePending : s.badgePaid]}>
@@ -743,6 +750,8 @@ function CalendarView({ incomes, expenses }: { incomes: Income[]; expenses: Expe
 
           <ProductInsights incomes={monthIncomes} scope="This month" />
 
+          <CategoryTrends incomes={incomes} expenses={expenses} year={year} monthIndex={monthIndex} monthName={monthName} />
+
           <Pressable testID="export-month-button" onPress={exportPdf} disabled={exporting || rows.length === 0} style={[s.exportButton, (exporting || rows.length === 0) && s.exportDisabled]}>
             <MaterialCommunityIcons name="file-pdf-box" size={19} color="#fff" />
             <Text style={s.exportText}>{exporting ? "Preparing…" : `Export ${monthName} as PDF`}</Text>
@@ -1042,7 +1051,7 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, 
       </Pressable>
       <Pressable testID="open-vendors-button" style={s.settingRow} onPress={onOpenVendors}>
         <MaterialCommunityIcons name="swap-horizontal" size={22} color={C.forest} />
-        <View style={s.settingCopy}><Text style={s.settingTitle}>Vendors &amp; totals</Text><Text style={s.settingSub}>Total income and expenses per person or vendor.</Text></View>
+        <View style={s.settingCopy}><Text style={s.settingTitle}>Customers &amp; suppliers</Text><Text style={s.settingSub}>Separate lists for people you sell to and suppliers you pay. Tap to view history &amp; export a PDF.</Text></View>
         <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
       </Pressable>
       <Pressable testID="open-backups-button" style={s.settingRow} onPress={onOpenBackups}>
@@ -1150,6 +1159,59 @@ function PaymentModal({ record, onChange, onClose }: { record: Income; onChange:
   );
 }
 
+function CategoryTrends({ incomes, expenses, year, monthIndex, monthName }: { incomes: Income[]; expenses: Expense[]; year: number; monthIndex: number; monthName: string }) {
+  const prev = new Date(year, monthIndex - 1, 1);
+  const prevName = new Intl.DateTimeFormat("en-IN", { month: "short" }).format(prev);
+  const inMonth = (dateStr: string, y: number, m: number) => { const d = new Date(dateStr); return d.getFullYear() === y && d.getMonth() === m; };
+  const incCats = ["Coir Pith", "Coir Bale"] as const;
+  const expCats = ["Salaries", "Current bill", "Maintenance", "Husk"] as const;
+  const rows = [
+    ...incCats.map((cat) => ({
+      cat, type: "income" as const,
+      cur: incomes.filter((r) => r.product === cat && inMonth(r.date, year, monthIndex)).reduce((s, r) => s + r.amount, 0),
+      prv: incomes.filter((r) => r.product === cat && inMonth(r.date, prev.getFullYear(), prev.getMonth())).reduce((s, r) => s + r.amount, 0),
+    })),
+    ...expCats.map((cat) => ({
+      cat, type: "expense" as const,
+      cur: expenses.filter((r) => r.category === cat && inMonth(r.date, year, monthIndex)).reduce((s, r) => s + expenseTotal(r), 0),
+      prv: expenses.filter((r) => r.category === cat && inMonth(r.date, prev.getFullYear(), prev.getMonth())).reduce((s, r) => s + expenseTotal(r), 0),
+    })),
+  ].filter((r) => r.cur > 0 || r.prv > 0);
+  if (rows.length === 0) return null;
+  const withDelta = rows.map((r) => {
+    const delta = r.cur - r.prv;
+    const pct = r.prv > 0 ? (delta / r.prv) * 100 : (r.cur > 0 ? 100 : 0);
+    return { ...r, delta, pct };
+  }).sort((a, b) => b.pct - a.pct);
+  const top = withDelta.find((r) => r.delta > 0);
+  return (
+    <View testID="category-trends" style={s.trendsCard}>
+      <View style={s.insightsHead}>
+        <Text style={s.insightsTitle}>CATEGORY TRENDS · VS {prevName.toUpperCase()}</Text>
+        {top ? <Text style={s.insightsLeader}>↑ {top.cat}</Text> : null}
+      </View>
+      {withDelta.map((r) => {
+        const up = r.delta > 0.009, down = r.delta < -0.009;
+        const color = r.type === "income" ? (up ? C.income : down ? C.expense : C.muted) : (up ? C.expense : down ? C.income : C.muted);
+        return (
+          <View key={`${r.type}-${r.cat}`} testID={`trend-row-${r.cat.replace(/\s+/g, "-").toLowerCase()}`} style={s.trendRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={s.trendCat} numberOfLines={1}>{r.cat}<Text style={s.trendType}>  {r.type === "income" ? "in" : "out"}</Text></Text>
+              <Text style={s.trendMeta}>{money(r.prv)} → {money(r.cur)}</Text>
+            </View>
+            <View style={s.trendDeltaWrap}>
+              <MaterialCommunityIcons name={up ? "trending-up" : down ? "trending-down" : "trending-neutral"} size={16} color={color} />
+              <Text style={[s.trendPct, { color }]}>{up ? "+" : ""}{Math.round(r.pct)}%</Text>
+            </View>
+          </View>
+        );
+      })}
+      <Text style={s.trendHint}>{monthName} vs {prevName}. Up income & down expense are good.</Text>
+    </View>
+  );
+}
+
+
 function ProductInsights({ incomes, scope }: { incomes: Income[]; scope: string }) {
   const pith = incomes.filter((r) => r.product === "Coir Pith").reduce((sum, r) => sum + r.amount, 0);
   const bale = incomes.filter((r) => r.product === "Coir Bale").reduce((sum, r) => sum + r.amount, 0);
@@ -1219,30 +1281,42 @@ function LocalBackupsModal({ backups, onCreate, onRestore, onDelete, requestConf
   );
 }
 
-type VendorTxn = { id: string; kind: "income" | "expense"; date: string; amount: number; label: string; due: number };
+type EntityTxn = { id: string; date: string; amount: number; label: string; due: number };
+type Entity = { name: string; phone: string; total: number; pending: number; txns: EntityTxn[] };
 function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expenses: Expense[]; onClose: () => void }) {
+  const [mode, setMode] = useState<"customers" | "suppliers">("customers");
   const [selected, setSelected] = useState<string | null>(null);
-  const map = new Map<string, { name: string; income: number; expense: number; pending: number; txns: VendorTxn[] }>();
-  const ensure = (rawName: string) => {
-    const key = (rawName || "").trim() || "Unnamed";
-    const cur = map.get(key) || { name: key, income: 0, expense: 0, pending: 0, txns: [] };
-    map.set(key, cur);
-    return cur;
+  const [busy, setBusy] = useState(false);
+
+  const build = (isCustomer: boolean): Map<string, Entity> => {
+    const map = new Map<string, Entity>();
+    const ensure = (rawName: string, phone?: string) => {
+      const key = (rawName || "").trim() || (isCustomer ? "Unnamed customer" : "Unnamed supplier");
+      const cur = map.get(key) || { name: key, phone: "", total: 0, pending: 0, txns: [] };
+      if (!cur.phone && phone) cur.phone = phone;
+      map.set(key, cur);
+      return cur;
+    };
+    if (isCustomer) incomes.forEach((r) => { const cur = ensure(r.name, r.phone); const due = dueOf(r); cur.total += r.amount; cur.pending += due; cur.txns.push({ id: r.id, date: r.date, amount: r.amount, label: describeRow(r), due }); });
+    else expenses.forEach((r) => { const cur = ensure(r.description); const amt = expenseTotal(r); const due = expenseDue(r); cur.total += amt; cur.pending += due; cur.txns.push({ id: r.id, date: r.date, amount: amt, label: describeRow(r), due }); });
+    return map;
   };
-  incomes.forEach((r) => {
-    const cur = ensure(r.name);
-    const due = dueOf(r);
-    cur.income += r.amount; cur.pending += due;
-    cur.txns.push({ id: r.id, kind: "income", date: r.date, amount: r.amount, label: describeRow(r), due });
-  });
-  expenses.forEach((r) => {
-    const cur = ensure(r.description);
-    const amt = expenseTotal(r); const due = expenseDue(r);
-    cur.expense += amt; cur.pending += due;
-    cur.txns.push({ id: r.id, kind: "expense", date: r.date, amount: amt, label: describeRow(r), due });
-  });
-  const vendors = [...map.values()].sort((a, b) => (b.income + b.expense) - (a.income + a.expense));
+  const isCustomer = mode === "customers";
+  const map = build(isCustomer);
+  const list = [...map.values()].sort((a, b) => b.pending - a.pending || b.total - a.total);
   const active = selected ? map.get(selected) : null;
+  const accent = isCustomer ? C.income : C.expense;
+
+  const exportPdf = async (e: Entity) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const html = buildEntityHTML(e.name, isCustomer, e.txns, e.total, e.pending);
+      if (Platform.OS === "web") await Print.printAsync({ html });
+      else { const { uri } = await Print.printToFileAsync({ html }); if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: "application/pdf", dialogTitle: `Statement — ${e.name}`, UTI: "com.adobe.pdf" }); }
+    } catch { /* cancelled */ } finally { setBusy(false); }
+  };
+
   return (
     <Modal animationType="slide" transparent visible onRequestClose={onClose}>
       <View style={s.modalWrap}>
@@ -1252,48 +1326,64 @@ function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expen
             <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
               {active && <Pressable testID="vendor-detail-back" hitSlop={10} onPress={() => setSelected(null)} style={{ marginRight: 10 }}><MaterialCommunityIcons name="arrow-left" size={22} color={C.ink} /></Pressable>}
               <View style={{ flex: 1 }}>
-                <Text style={s.detailOverline}>{active ? "VENDOR HISTORY" : "TRANSACTION TOTALS"}</Text>
-                <Text style={s.formTitle} numberOfLines={1}>{active ? active.name : "Vendors"}</Text>
+                <Text style={s.detailOverline}>{active ? (isCustomer ? "CUSTOMER HISTORY" : "SUPPLIER HISTORY") : "TRANSACTION TOTALS"}</Text>
+                <Text style={s.formTitle} numberOfLines={1}>{active ? active.name : "Contacts"}</Text>
               </View>
             </View>
             <Pressable testID="vendors-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
           </View>
+
+          {!active && (
+            <View style={[s.modeToggle, { marginHorizontal: 20, marginBottom: 4 }]}>
+              <Pressable testID="vendors-tab-customers" onPress={() => setMode("customers")} style={[s.modeBtn, isCustomer && s.modeBtnSel]}><Text style={[s.modeText, isCustomer && s.modeTextSel]}>Customers</Text></Pressable>
+              <Pressable testID="vendors-tab-suppliers" onPress={() => setMode("suppliers")} style={[s.modeBtn, !isCustomer && s.modeBtnSel]}><Text style={[s.modeText, !isCustomer && s.modeTextSel]}>Suppliers</Text></Pressable>
+            </View>
+          )}
+
           {active ? (
             <ScrollView testID="vendor-detail-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
               <View style={s.detailSummary}>
-                <View><Text style={s.panelLabel}>INCOME</Text><Text style={[s.smallAmount, { color: C.income }]}>{money(active.income)}</Text></View>
-                <View><Text style={s.panelLabel}>EXPENSE</Text><Text style={[s.smallAmount, { color: C.expense }]}>{money(active.expense)}</Text></View>
+                <View><Text style={s.panelLabel}>{isCustomer ? "PURCHASED" : "BILLED"}</Text><Text style={[s.smallAmount, { color: accent }]}>{money(active.total)}</Text></View>
+                <View><Text style={s.panelLabel}>PAID</Text><Text style={[s.smallAmount, { color: C.income }]}>{money(active.total - active.pending)}</Text></View>
                 <View><Text style={s.panelLabel}>PENDING</Text><Text style={[s.smallAmount, { color: C.action }]}>{money(active.pending)}</Text></View>
               </View>
+              <Pressable testID="vendor-statement-button" onPress={() => exportPdf(active)} disabled={busy} style={[s.statementBtn, busy && s.exportDisabled]}>
+                <MaterialCommunityIcons name="file-pdf-box" size={16} color={C.forest} />
+                <Text style={s.statementBtnText}>{busy ? "Preparing…" : "Export statement (PDF)"}</Text>
+              </Pressable>
+              <Pressable testID="vendor-whatsapp-button" onPress={() => openWhatsApp(isCustomer ? waStatement(active.name, active.total, active.total - active.pending, active.pending) : waSupplier(active.name, active.total, active.pending), active.phone)} style={s.waBtn}>
+                <MaterialCommunityIcons name="whatsapp" size={16} color="#fff" />
+                <Text style={s.waBtnText}>Send on WhatsApp</Text>
+              </Pressable>
               <Text style={s.detailSectionLabel}>{active.txns.length} TRANSACTION{active.txns.length === 1 ? "" : "S"}</Text>
               {[...active.txns].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((t) => (
                 <View key={t.id} testID="vendor-txn-row" style={s.detailRow}>
                   <View style={s.detailRowMain}>
                     <Text style={s.detailRowTitle}>{t.label}</Text>
-                    <Text style={s.reminderMeta}>{displayDate(t.date)}{t.due > 0.009 ? ` · due ${money(t.due)}` : ""}</Text>
+                    <Text style={s.reminderMeta}>{displayDate(t.date)}{t.due > 0.009 ? ` · due ${money(t.due)}` : " · paid"}</Text>
                   </View>
-                  <Text style={[s.detailAmount, { color: t.kind === "income" ? C.income : C.expense }]}>{t.kind === "income" ? "+ " : "− "}{money(t.amount)}</Text>
+                  <Text style={[s.detailAmount, { color: accent }]}>{isCustomer ? "+ " : "− "}{money(t.amount)}</Text>
                 </View>
               ))}
               <View style={{ height: 30 }} />
             </ScrollView>
           ) : (
             <ScrollView testID="vendors-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
-              {vendors.length === 0 ? (
+              {list.length === 0 ? (
                 <View style={s.empty}>
                   <MaterialCommunityIcons name="account-search-outline" size={30} color={C.action} />
-                  <Text style={s.emptyTitle}>No vendors yet</Text>
-                  <Text style={s.emptyCopy}>Add income or expenses with a name to see totals.</Text>
+                  <Text style={s.emptyTitle}>{isCustomer ? "No customers yet" : "No suppliers yet"}</Text>
+                  <Text style={s.emptyCopy}>{isCustomer ? "Add income with a customer name to see totals." : "Add expenses with a supplier name to see totals."}</Text>
                 </View>
-              ) : vendors.map((v) => (
+              ) : list.map((v) => (
                 <Pressable key={v.name} testID="vendor-row" onPress={() => setSelected(v.name)} style={s.vendorRow}>
                   <View style={s.detailRowMain}>
                     <Text style={s.detailRowTitle}>{v.name}</Text>
-                    <Text style={s.reminderMeta}>{v.txns.length} txn{v.txns.length === 1 ? "" : "s"} · Net {money(v.income - v.expense)}{v.pending > 0.009 ? ` · ${money(v.pending)} pending` : ""}</Text>
+                    <Text style={s.reminderMeta}>{v.txns.length} txn{v.txns.length === 1 ? "" : "s"}{v.pending > 0.009 ? ` · ${money(v.pending)} pending` : " · all paid"}</Text>
                   </View>
                   <View style={s.vendorTotals}>
-                    <Text style={s.vendorIncome} testID="vendor-income">+ {money(v.income)}</Text>
-                    <Text style={s.vendorExpense} testID="vendor-expense">− {money(v.expense)}</Text>
+                    <Text style={[s.vendorIncome, { color: accent }]} testID="vendor-total">{isCustomer ? "+ " : "− "}{money(v.total)}</Text>
+                    {v.pending > 0.009 ? <Text style={s.vendorPending} testID="vendor-pending">{money(v.pending)} due</Text> : null}
                   </View>
                   <MaterialCommunityIcons name="chevron-right" size={18} color={C.line} />
                 </Pressable>
@@ -1354,6 +1444,27 @@ function buildCustomerHTML(name: string, records: Income[], total: number, pendi
   </body></html>`;
 }
 
+function buildEntityHTML(name: string, isCustomer: boolean, txns: EntityTxn[], total: number, pending: number) {
+  const sorted = [...txns].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const rows = sorted.map((t) => `<tr><td>${displayDate(t.date)}</td><td>${escapeHtml(t.label)}</td><td>${t.due > 0.009 ? `Due ${escapeHtml(money(t.due))}` : "Paid"}</td><td class="amt">${escapeHtml(money(t.amount))}</td></tr>`).join("");
+  const totalLabel = isCustomer ? "Total Purchased" : "Total Billed";
+  const dueLabel = isCustomer ? "Outstanding Due" : "Balance to Pay";
+  return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
+    <h1>Statement · ${escapeHtml(name)}</h1>
+    <div class="sub">SVKD COIR · ${isCustomer ? "Customer" : "Supplier"} · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
+    <div class="cards">
+      <div class="card"><div class="k">${totalLabel}</div><div class="v ${isCustomer ? "inc" : "exp"}">${escapeHtml(money(total))}</div></div>
+      <div class="card"><div class="k">Paid</div><div class="v">${escapeHtml(money(total - pending))}</div></div>
+      <div class="card"><div class="k">${dueLabel}</div><div class="v exp">${escapeHtml(money(pending))}</div></div>
+    </div>
+    <h2>Transactions</h2>
+    <table><thead><tr><th>Date</th><th>Details</th><th>Status</th><th class="amt">Amount</th></tr></thead>
+    <tbody>${rows || `<tr><td colspan="4" class="empty">No transactions</td></tr>`}</tbody>
+    <tfoot><tr><td colspan="3">${dueLabel}</td><td class="amt">${escapeHtml(money(pending))}</td></tr></tfoot></table>
+    <div class="foot">${isCustomer ? "Thank you for your business" : "Statement for your records"} · SVKD COIR</div>
+  </body></html>`;
+}
+
 const s = StyleSheet.create({
   safe: { flex: 1, backgroundColor: C.canvas },
   header: { height: 70, paddingHorizontal: 20, backgroundColor: C.surface, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
@@ -1403,6 +1514,9 @@ const s = StyleSheet.create({
   chipSelected: { backgroundColor: C.forest, borderColor: C.forest },
   chipText: { color: C.muted, fontSize: 12, fontWeight: "700" },
   chipTextSelected: { color: "#fff" },
+  pendingChip: { flexDirection: "row", gap: 5, borderColor: "#E6C89A", backgroundColor: "#FBF2E4" },
+  pendingChipSelected: { backgroundColor: C.action, borderColor: C.action },
+
   tableHeader: { flexDirection: "row", padding: 11, backgroundColor: "#F0E9DC", borderTopWidth: 1, borderBottomWidth: 1, borderColor: C.line },
   cell: { flex: 1, color: C.muted, fontSize: 10, fontWeight: "800", letterSpacing: 0.6 },
   dateCell: { width: 78, flex: 0 },
@@ -1413,6 +1527,7 @@ const s = StyleSheet.create({
   rowActions: { width: 65, flexDirection: "row", justifyContent: "space-between", paddingLeft: 10 },
   badge: { flexDirection: "row", alignItems: "center", gap: 3, alignSelf: "flex-start", marginTop: 6, minHeight: 24, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, borderWidth: 1 },
   badgePending: { backgroundColor: "#F7EAD8", borderColor: "#E6C89A" },
+  badgePart: { backgroundColor: "#E1ECF7", borderColor: "#B4CDE8" },
   badgePaid: { backgroundColor: "#E4F0E8", borderColor: "#B9D8C4" },
   badgeText: { fontSize: 9, fontWeight: "800", letterSpacing: 0.5 },
   empty: { padding: 25, alignItems: "center" },
@@ -1552,6 +1667,7 @@ const s = StyleSheet.create({
   vendorTotals: { alignItems: "flex-end", gap: 3 },
   vendorIncome: { color: C.income, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 13, fontWeight: "800" },
   vendorExpense: { color: C.expense, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 13, fontWeight: "800" },
+  vendorPending: { color: C.action, fontSize: 11, fontWeight: "700", marginTop: 2 },
   breakdownCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 12, marginBottom: 12 },
   breakdownHeadRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 8 },
   breakdownTitle: { fontSize: 10, letterSpacing: 1, fontWeight: "800", color: C.muted },
@@ -1573,6 +1689,15 @@ const s = StyleSheet.create({
   insightsHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
   insightsTitle: { color: C.action, fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
   insightsLeader: { color: C.forest, fontSize: 11, fontWeight: "800" },
+  trendsCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 10, padding: 14, marginTop: 14 },
+  trendRow: { flexDirection: "row", alignItems: "center", paddingVertical: 8, borderTopWidth: 1, borderTopColor: C.line },
+  trendCat: { fontSize: 13, fontWeight: "700", color: C.ink },
+  trendType: { fontSize: 10, fontWeight: "700", color: C.muted },
+  trendMeta: { fontSize: 11, color: C.muted, marginTop: 2, fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }) },
+  trendDeltaWrap: { flexDirection: "row", alignItems: "center", gap: 4, minWidth: 74, justifyContent: "flex-end" },
+  trendPct: { fontSize: 13, fontWeight: "800" },
+  trendHint: { fontSize: 10, color: C.muted, marginTop: 10, fontStyle: "italic" },
+
   insightRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 8 },
   insightName: { width: 68, color: C.ink, fontSize: 12, fontWeight: "700" },
   insightTrack: { flex: 1, height: 10, backgroundColor: "#F0E9DC", borderRadius: 5, overflow: "hidden" },

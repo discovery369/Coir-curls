@@ -1,0 +1,39 @@
+{
+  "summary": "Frontend-only verification at 390x844 for SVKD COIR iteration-10 features. ALL 9 targeted flows PASS (Customers/Suppliers split, per-entity PDF+WhatsApp buttons, pending-only chips on both ledgers, Category Trends card in Calendar Month view, blue PART PAID badge, and regression add/delete + legacy customers modal + category-breakdown). Test used direct localStorage seed (key 'coir-ledger-records-v1') with 5 incomes and 5 expenses spanning Dec 2025 + Jan 2026. Results: (T1) income-chip-pending-only correctly filters income ledger from 5 rows → 2 pending rows and restores on toggle-off. (T2) expense-chip-pending-only filters expenses from 5 → 1 pending row and restores. (T3) Tapping income-status-toggle on Gamma Corp (₹8,000 pending, newest) opens PaymentModal; adding ₹3,000 partial payment shrinks due to ₹5,000, and after closing, the badge reads 'PART PAID' with computed color rgb(47,111,176) — blue-dominant (b>r, b>g). Screenshot: iter10_part_paid.jpeg. (T4) Settings > open-vendors-button opens vendors-modal with two tabs: vendors-tab-customers lists exactly 3 unique customer names (Alpha Traders, Beta Buyers, Gamma Corp) from Income data; vendors-tab-suppliers lists exactly 3 unique suppliers (Ravi Salary, Batch A Husk, Motor Repair) from Expense descriptions. No cross-leak between tabs. Screenshot: iter10_suppliers.jpeg. (T5) Tapping vendor-row (Beta Buyers) opens vendor-detail-modal showing PURCHASED ₹37,000 / PAID ₹12,000 / PENDING ₹25,000, both vendor-statement-button and vendor-whatsapp-button visible, 2 vendor-txn-row entries newest-first (12 Jan 2026 first, then 20 Dec 2025). Supplier detail (Batch A Husk) correctly shows 'BILLED' label instead of 'PURCHASED'. vendor-detail-back returns to list. (T6) Calendar > Month view navigated to January 2026 renders category-trends card with header 'CATEGORY TRENDS · VS DEC' and 5 trend rows, all showing correct prev→cur amounts and %: Coir Pith ₹10,000→₹23,000 (+130%), Coir Bale ₹12,000→₹25,000 (+108%), Maintenance ₹0→₹1,500 (+100%), Husk ₹4,000→₹6,000 (+50%), Salaries ₹5,000→₹7,000 (+40%). Trending-up icons present. Screenshot: iter10_trends.jpeg. (T7) Legacy open-customers-button still opens customers-modal with statement + WhatsApp buttons. (T8) income-category-breakdown and expense-category-breakdown regression cards render. (T9) Add income via RecordForm (Coir Pith, TEST_Regression_Cust, paid, ₹1,234) increments the ledger count by 1; deleting via record-delete-button + confirm-delete-button restores the original count. No console errors, no red screens, no pageerrors during the full session. PART PAID also survives page reload when payments[] is seeded directly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Calendar > Month > Category Trends", "issues": ["Cosmetic inconsistency: header shows 'CATEGORY TRENDS · VS DEC' (short) while the current-month header above shows 'January 2026' (full). Also the hint line reads 'January 2026 vs Dec.' — mixing full and short month names in one card. Consider using the same format for both (e.g. 'VS DECEMBER' or 'January vs December 2025'). Non-blocking. Reference: /app/frontend/app/index.tsx:1190, 1209."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_10.json",
+    "/app/test_reports/ui/iter10_part_paid.jpeg",
+    "/app/test_reports/ui/iter10_suppliers.jpeg",
+    "/app/test_reports/ui/iter10_trends.jpeg"
+  ],
+  "action_items": [
+    "COSMETIC (P3): Align prev-month name format between the CategoryTrends header (short 'DEC') and the hint line + neighbouring monthly header (full 'January 2026'). /app/frontend/app/index.tsx:1190 and :1209.",
+    "REFACTOR (P1, carried): /app/frontend/app/index.tsx is now 1720 lines. Split into components/ (VendorsModal, CategoryTrends, PaymentModal, RecordForm, Ledger, MonthlyCalendar, YearlyOverview) and utils/ (money, wa*, buildEntityHTML, sanitizers). Non-blocking but overdue vs the 700-line threshold."
+  ],
+  "critical_code_review_comments": [
+    "VendorsModal (index.tsx:1286) correctly builds two separate maps per mode from either incomes (customers) or expenses (suppliers) — no cross-leak observed. Good.",
+    "CategoryTrends (index.tsx:1188) sorts rows by pct descending and picks the top up-trend for the leader chip. Handles prev=0 by using 100% when cur>0 — sensible fallback that showed up correctly for Maintenance (0→1500 = +100%).",
+    "PART PAID logic: partPaid = isIncome && paidSum(row) > 0 && due > 0 (index.tsx:436). Badge uses s.badgePart style and C.blue text/icon (index.tsx:444-446). Verified computed color rgb(47,111,176) — blue-dominant.",
+    "Pending-only chip is component-local state (setPendingOnly inside Ledger, index.tsx:413). Each ledger has its own toggle; switching tabs preserves state per instance. OK because both ledgers unmount when the other tab is active (see conditional render at index.tsx:197-198).",
+    "vendor-txn-row list is sorted newest-first at render time (index.tsx:1359) — consistent with ledger sort.",
+    "Per-entity PDF export uses buildEntityHTML + Print.printAsync on web (index.tsx:1314-1316) — same pattern as customers modal statement. Cannot fully exercise the PDF renderer in headless Playwright but the button is wired and disables during busy state.",
+    "File size: /app/frontend/app/index.tsx is 1720 lines (>700 threshold). Refactor pending (carried).",
+    "No deprecated Expo packages detected (no expo-av / expo-barcode-scanner / expo-background-fetch usages). expo-print and expo-sharing are the correct current APIs."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% (9/9 targeted flows + PART-PAID-persist bonus check pass)"},
+  "seed_data_creation": "Seeded 5 incomes and 5 expenses directly into localStorage['coir-ledger-records-v1'] spanning Dec 2025 + Jan 2026 (Alpha Traders, Beta Buyers, Gamma Corp customers; Ravi Salary, Batch A Husk, Motor Repair suppliers). Gamma Corp Jan-18 has payments:[₹3,000] to force PART PAID.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview: https://profit-calculator-111.preview.emergentagent.com. Viewport 390x844. Storage key: 'coir-ledger-records-v1' (AsyncStorage → localStorage on web). System clock in preview shows Aug 2026 as 'today' so if you need to test Category Trends you must NAVIGATE the calendar back to a month that has both current + previous month data; a 24-step next-then-previous loop is NOT enough. Prefer a single-direction loop of ≥12 previous-month clicks. Iteration-10 testIDs added: income-chip-pending-only, expense-chip-pending-only, category-trends, trend-row-<cat-slug>, vendors-tab-customers, vendors-tab-suppliers, vendor-statement-button, vendor-whatsapp-button. RN-web Pressable inside modals still swallows plain Playwright clicks in some cases — the pointerdown/mousedown/pointerup/mouseup/click dispatch pattern is reliable (see this iteration's script). PART PAID badge color is verified via getComputedStyle on the inner <Text> node.",
+  "rca_of_issue": "N/A — verification round; all specified iteration-10 features pass with no defects."
+}
