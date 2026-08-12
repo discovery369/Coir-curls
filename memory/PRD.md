@@ -31,6 +31,9 @@ Small coir business owner/operator recording daily cash, tracking customer dues,
 - Local backups (on-device snapshots: create/restore/delete) + Restore-from-file.
 - Security hardening: restore input validated/coerced (sanitizeIncome/Expense); user text escaped in generated PDF HTML.
 
+## Implemented (2026-06-12, batch 3)
+- Overview "Money Position" card: TO COLLECT (receivables) vs TO PAY (payables) with a net position line; tap opens Payment Reminders. Replaces the older outstanding pill.
+
 ## Testing
 - testing_agent iterations 3–11: all flows pass, no regressions. Latest: iteration_11 all green.
 

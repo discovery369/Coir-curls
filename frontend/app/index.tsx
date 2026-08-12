@@ -179,15 +179,29 @@ export default function Index() {
             </View>
 
             {(outstanding > 0 || payable > 0) && (
-              <Pressable testID="outstanding-pill" onPress={() => setShowReminders(true)} style={s.outstandingPill}>
-                <MaterialCommunityIcons name="clock-alert-outline" size={17} color={C.action} />
-                <Text style={s.outstandingText}>
-                  {outstanding > 0 ? <Text><Text style={s.outstandingStrong}>{money(outstanding)}</Text> to collect</Text> : null}
-                  {outstanding > 0 && payable > 0 ? " · " : ""}
-                  {payable > 0 ? <Text><Text style={s.outstandingStrong}>{money(payable)}</Text> to pay</Text> : null}
-                  {outstanding > 0 && payable > 0 ? "" : " · reminders"}
-                </Text>
-                <MaterialCommunityIcons name="chevron-right" size={18} color={C.action} />
+              <Pressable testID="net-position-card" onPress={() => setShowReminders(true)} style={s.positionCard}>
+                <View style={s.positionHead}>
+                  <Text style={s.positionTitle}>MONEY POSITION</Text>
+                  <View style={s.positionCta}>
+                    <Text style={s.positionCtaText}>Reminders</Text>
+                    <MaterialCommunityIcons name="chevron-right" size={16} color={C.action} />
+                  </View>
+                </View>
+                <View style={s.positionRow}>
+                  <View style={s.positionCol}>
+                    <View style={s.positionLabelRow}><MaterialCommunityIcons name="arrow-down-left" size={13} color={C.income} /><Text style={s.positionLabel}>TO COLLECT</Text></View>
+                    <Text testID="position-to-collect" style={[s.positionAmount, { color: C.income }]}>{money(outstanding)}</Text>
+                  </View>
+                  <View style={s.positionDivider} />
+                  <View style={s.positionCol}>
+                    <View style={s.positionLabelRow}><MaterialCommunityIcons name="arrow-up-right" size={13} color={C.expense} /><Text style={s.positionLabel}>TO PAY</Text></View>
+                    <Text testID="position-to-pay" style={[s.positionAmount, { color: C.expense }]}>{money(payable)}</Text>
+                  </View>
+                </View>
+                <View style={s.positionNetRow}>
+                  <Text style={s.positionNetLabel}>Net position</Text>
+                  <Text testID="position-net" style={[s.positionNetAmount, { color: outstanding - payable >= 0 ? C.income : C.expense }]}>{outstanding - payable >= 0 ? "+" : "−"}{money(Math.abs(outstanding - payable))}</Text>
+                </View>
               </Pressable>
             )}
 
@@ -1535,6 +1549,21 @@ const s = StyleSheet.create({
   outstandingPill: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#F7EAD8", borderWidth: 1, borderColor: "#E6C89A", borderRadius: 10, paddingVertical: 12, paddingHorizontal: 14, marginBottom: 18 },
   outstandingText: { flex: 1, color: C.ink, fontSize: 13 },
   outstandingStrong: { fontWeight: "800", color: C.action },
+  positionCard: { backgroundColor: C.surface, borderWidth: 1, borderColor: C.line, borderRadius: 12, padding: 14, marginBottom: 18 },
+  positionHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  positionTitle: { color: C.muted, fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
+  positionCta: { flexDirection: "row", alignItems: "center" },
+  positionCtaText: { color: C.action, fontSize: 11, fontWeight: "800" },
+  positionRow: { flexDirection: "row", alignItems: "center" },
+  positionCol: { flex: 1 },
+  positionLabelRow: { flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 5 },
+  positionLabel: { color: C.muted, fontSize: 10, fontWeight: "800", letterSpacing: 0.8 },
+  positionAmount: { fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 18, fontWeight: "700" },
+  positionDivider: { width: 1, alignSelf: "stretch", backgroundColor: C.line, marginHorizontal: 14 },
+  positionNetRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line },
+  positionNetLabel: { color: C.ink, fontSize: 13, fontWeight: "700" },
+  positionNetAmount: { fontFamily: Platform.select({ ios: "Courier New", default: "monospace" }), fontSize: 16, fontWeight: "800" },
+
   tabs: { backgroundColor: "#E9E2D7", padding: 4, flexDirection: "row", borderRadius: 22, marginBottom: 16 },
   tab: { flex: 1, minHeight: 40, alignItems: "center", justifyContent: "center", borderRadius: 19 },
   selectedTab: { backgroundColor: C.forest },
