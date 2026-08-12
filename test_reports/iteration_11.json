@@ -1,0 +1,41 @@
+{
+  "summary": "Frontend-only verification at 390x844 for SVKD COIR iteration-11. ALL new features PASS: (T1) Diesel category is a selectable option in RecordForm (record-type-diesel); a saved Diesel expense (TEST_Diesel_Pump ₹1,275 paid) appears in the Expenses ledger and the expense-chip-diesel filters the list. expense-category-breakdown shows a Diesel row with 3 rows · ₹6,775 total, breakdown-received-diesel = ₹3,275 and breakdown-pending-diesel = ₹3,500 (2 seeded + 1 saved, correctly aggregated). (T2) Settings > 'Customers & suppliers' opens vendors-modal with vendors-search-input present. Customers tab: 3 rows -> typing 'Alp' filters to 1 (Alpha Traders) -> vendors-search-clear restores to 3. Suppliers tab: placeholder correctly reads 'Search suppliers...', 5 rows -> typing 'Rav' filters to 1 (Ravi Salary). Tab switch also resets the query. (T3) With payables seeded, outstanding-pill on Overview shows both '₹23,000 to collect' AND '₹9,000 to pay'. Tap opens reminders-modal on the Customers-owe-you tab (2 reminder-row: Beta Buyers, Gamma Corp) with reminder-whatsapp + reminder-mark-paid visible. reminders-tab-payables switches to 'To pay' listing 3 payable-row (IOC Pump / Diesel / owe ₹3,500; Batch A Husk / Husk / owe ₹4,000; Motor Repair / Maintenance / owe ₹1,500) totalling ₹9,000. Tapping payable-mark-paid on the first row settles it and the list drops to 2. Switching reminders-tab-receivables retains 2 reminder-row entries. (Regression) PART PAID badge on Gamma Corp income renders with computed color rgb(47,111,176) (blue-dominant); income-chip-pending-only filters 3->2 and restores to 3; expense-chip-diesel/all cycles work; vendor-detail-modal for Beta Buyers shows vendor-statement-button + vendor-whatsapp-button and per-entity totals. No red screens, no console/page errors during the full session.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Overview > outstanding-pill", "issues": ["When both receivables and payables are present the pill wraps to 2 lines on 390px width ('₹23,000.00 to collect · ₹9,000.00 to pay · reminders'). Consider dropping the trailing ' · reminders' when both amounts are shown, or shrinking the font, so the pill stays single-line. Non-blocking. Reference: /app/frontend/app/index.tsx:181-192."]},
+      {"screen": "RemindersModal payables", "issues": ["Meta line shows raw absolute days ('216 days · owe ₹3,500.00') without the OLDER-THAN filter context. With overdueDays default = 15 the 216 days figure reflects the seed dates against the preview's system clock (currently mid-Aug 2026) which is confusing to a real user with fresh data. Non-blocking. Reference: /app/frontend/app/index.tsx:975-977."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_11.json",
+    "/app/test_reports/ui/iter11_overview.jpeg",
+    "/app/test_reports/ui/iter11_diesel_breakdown.jpeg",
+    "/app/test_reports/ui/iter11_search_suppliers.jpeg",
+    "/app/test_reports/ui/iter11_reminders_payables.jpeg",
+    "/app/test_reports/ui/iter11_vendor_detail.jpeg"
+  ],
+  "action_items": [
+    "COSMETIC (P3): Trim the outstanding-pill copy when both to-collect and to-pay are shown so it fits on one line at 390px; e.g., '₹23,000 to collect · ₹9,000 to pay' without the ' · reminders' suffix. /app/frontend/app/index.tsx:181-192.",
+    "REFACTOR (P1, still carried from iter-10): /app/frontend/app/index.tsx is 1766 lines. Split into components/ (VendorsModal, RemindersModal, CategoryBreakdown, CategoryTrends, PaymentModal, RecordForm, Ledger, MonthlyCalendar, Settings) and utils/ (money, wa*, buildEntityHTML). Non-blocking but overdue vs 700-line threshold."
+  ],
+  "critical_code_review_comments": [
+    "Diesel wiring is complete and consistent across the 4 locations: type union (index.tsx:12), EXPENSE_CATS (index.tsx:48), Ledger chips (index.tsx:385), CategoryBreakdown (index.tsx:476), RecordForm options (index.tsx:537), and CategoryTrends (index.tsx:1204). The Diesel description placeholder ('Pump / supplier name') is appropriate.",
+    "VendorsModal.search: filteredList is derived by lower-cased name.includes(q.trim().toLowerCase()) on top of the mode-specific map (customers built from incomes, suppliers from expense description|category). Tab switch resets q via setQ('') (index.tsx:1377-1378) — good UX. Both testIDs (vendors-search-input, vendors-search-clear) exist.",
+    "RemindersModal tabs: totals recomputed per mode via activeTotal/activeCount; payDue is filtered by expenseDue(r) > 0.009 which correctly excludes paid rows. Mark paid path onSettleExpense mutates state and the row drops off next render — verified in test. Empty state text differentiates 'Nothing to collect' vs 'Nothing to pay'.",
+    "outstanding-pill visibility gate is (outstanding > 0 || payable > 0) (index.tsx:181) — so a user with only payables (no receivables) will still see the pill and land on Reminders. Good.",
+    "PART PAID badge logic unchanged (partPaid = isIncome && paidSum(row) > 0 && due > 0, index.tsx:436) — verified rgb(47,111,176) blue-dominant.",
+    "File size grown to 1766 lines (was 1720 last iter). Refactor pending.",
+    "No deprecated Expo packages detected (no expo-av / expo-barcode-scanner / expo-background-fetch usages). expo-print + expo-sharing are current APIs."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% (all iteration-11 targeted flows + regression checks pass)"},
+  "seed_data_creation": "Seeded localStorage['coir-ledger-records-v1'] as {incomes, expenses} (correct storage shape). 3 incomes (Alpha Traders paid ₹20k, Beta Buyers pending ₹15k, Gamma Corp pending ₹8k with a ₹3k partial payment) + 5 expenses spanning all 5 categories (Salaries paid ₹5k, Diesel pending ₹3.5k = IOC Pump, Diesel paid ₹2k = HP Bunk, Husk pending ₹4k = Batch A, Maintenance pending ₹1.5k = Motor Repair). This exercises Diesel breakdown, payables list (3 payables totalling ₹9k), pending-only chip, and PART PAID badge in a single session.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview: https://profit-calculator-111.preview.emergentagent.com. Viewport 390x844. Storage key: 'coir-ledger-records-v1', shape {incomes:Income[], expenses:Expense[]} — do NOT seed as a bare array (silently ignored). Preview system clock is mid-Aug 2026 so days-overdue values look large against Jan-2026 seed data. RN-web Pressable inside modals sometimes swallows plain Playwright clicks — use the pointerdown/mousedown/pointerup/mouseup/click dispatch pattern (see this iteration's script) or await page.click(sel, force=True) after ensuring the element is scrolled into view. Ledger rows don't have per-row testIDs — count via [data-testid='record-edit-button'] or [data-testid='expense-status-badge'] instead. New iteration-11 testIDs verified: record-type-diesel, expense-chip-diesel, breakdown-received-diesel, breakdown-pending-diesel, vendors-search-input, vendors-search-clear, reminders-tab-receivables, reminders-tab-payables, payable-row, payable-mark-paid.",
+  "rca_of_issue": "N/A — verification round; all specified iteration-11 features (Diesel category, contact search, supplier payables reminders) plus PART PAID / pending-only chip / vendor drill-down regression pass with no defects."
+}

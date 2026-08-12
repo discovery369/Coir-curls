@@ -32,7 +32,12 @@ Small coir business owner/operator recording daily cash, tracking customer dues,
 - Security hardening: restore input validated/coerced (sanitizeIncome/Expense); user text escaped in generated PDF HTML.
 
 ## Testing
-- testing_agent iterations 3–10: all flows pass, no regressions. Latest: iteration_10 all green.
+- testing_agent iterations 3–11: all flows pass, no regressions. Latest: iteration_11 all green.
+
+## Implemented (2026-06-12, batch 2)
+- New "Diesel" expense category (form option, ledger chip, breakdown, trends).
+- Search box in the Customers/Suppliers screen to filter contacts by name (per tab).
+- Supplier (payables) reminders: Payment Reminders modal now has two tabs — "Customers owe you" (receivables) and "You owe suppliers" (payables), with Mark paid on pending expenses. Overview pill shows both to-collect and to-pay.
 
 ## Implemented (2026-06-12)
 - Customers vs Suppliers split in the contacts screen (Settings → "Customers & suppliers"): Customers built from income names, Suppliers from expense descriptions; each tappable to a drill-down history.

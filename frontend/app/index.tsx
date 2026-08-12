@@ -9,7 +9,7 @@ import { KeyboardAvoidingView, Linking, Modal, Platform, Pressable, SafeAreaView
 
 type Payment = { id: string; date: string; amount: number };
 type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; phone?: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[] };
-type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending" };
+type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Diesel" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending" };
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
 type Backup = { id: string; createdAt: string; incomes: Income[]; expenses: Expense[] };
 
@@ -45,7 +45,7 @@ const toNum = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ?
 const toStr = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
 const toIso = (v: unknown) => { const d = new Date(toStr(v)); return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString(); };
 const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const EXPENSE_CATS = ["Salaries", "Current bill", "Maintenance", "Husk"];
+const EXPENSE_CATS = ["Salaries", "Current bill", "Maintenance", "Diesel", "Husk"];
 const sanitizeIncome = (r: Record<string, unknown>): Income => ({
   id: toStr(r.id) || genId(),
   date: toIso(r.date),
@@ -113,6 +113,7 @@ export default function Index() {
   const totalIncome = useMemo(() => incomes.reduce((sum, row) => sum + row.amount, 0), [incomes]);
   const totalExpenses = useMemo(() => expenses.reduce((sum, row) => sum + row.amount + (row.repairAmount || 0), 0), [expenses]);
   const outstanding = useMemo(() => incomes.reduce((sum, row) => sum + dueOf(row), 0), [incomes]);
+  const payable = useMemo(() => expenses.reduce((sum, row) => sum + expenseDue(row), 0), [expenses]);
 
   const remove = (kind: "income" | "expense", id: string) => setConfirm({
     title: "Delete this record?",
@@ -127,6 +128,7 @@ export default function Index() {
     const payments = due > 0 ? [...(row.payments || []), { id: String(Date.now()), date: new Date().toISOString(), amount: due }] : (row.payments || []);
     return { ...row, payments, status: "paid" as const };
   }));
+  const settleExpense = (id: string) => setExpenses((rows) => rows.map((row) => row.id === id ? { ...row, status: "paid" as const } : row));
   const createBackup = () => setBackups((prev) => [{ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, createdAt: new Date().toISOString(), incomes, expenses }, ...prev].slice(0, 30));
   const deleteBackup = (id: string) => setBackups((prev) => prev.filter((b) => b.id !== id));
   const restoreBackup = (b: Backup) => { setIncomes(b.incomes); setExpenses(b.expenses); setShowBackups(false); };
@@ -176,10 +178,15 @@ export default function Index() {
               </View>
             </View>
 
-            {outstanding > 0 && (
+            {(outstanding > 0 || payable > 0) && (
               <Pressable testID="outstanding-pill" onPress={() => setShowReminders(true)} style={s.outstandingPill}>
                 <MaterialCommunityIcons name="clock-alert-outline" size={17} color={C.action} />
-                <Text style={s.outstandingText}><Text style={s.outstandingStrong}>{money(outstanding)}</Text> pending · tap to view reminders</Text>
+                <Text style={s.outstandingText}>
+                  {outstanding > 0 ? <Text><Text style={s.outstandingStrong}>{money(outstanding)}</Text> to collect</Text> : null}
+                  {outstanding > 0 && payable > 0 ? " · " : ""}
+                  {payable > 0 ? <Text><Text style={s.outstandingStrong}>{money(payable)}</Text> to pay</Text> : null}
+                  {outstanding > 0 && payable > 0 ? "" : " · reminders"}
+                </Text>
                 <MaterialCommunityIcons name="chevron-right" size={18} color={C.action} />
               </Pressable>
             )}
@@ -238,7 +245,7 @@ export default function Index() {
         />
       )}
 
-      {showReminders && <RemindersModal incomes={incomes} overdueDays={overdueDays} setOverdueDays={setOverdueDays} onSettle={settleIncome} onOpenPayment={(id) => { setShowReminders(false); setPaying(id); }} onClose={() => setShowReminders(false)} />}
+      {showReminders && <RemindersModal incomes={incomes} expenses={expenses} overdueDays={overdueDays} setOverdueDays={setOverdueDays} onSettle={settleIncome} onSettleExpense={settleExpense} onOpenPayment={(id) => { setShowReminders(false); setPaying(id); }} onClose={() => setShowReminders(false)} />}
       {showBackups && <LocalBackupsModal backups={backups} onCreate={createBackup} onRestore={restoreBackup} onDelete={deleteBackup} requestConfirm={setConfirm} onClose={() => setShowBackups(false)} />}
       {showVendors && <VendorsModal incomes={incomes} expenses={expenses} onClose={() => setShowVendors(false)} />}
       {showCustomers && <CustomersModal incomes={incomes} onClose={() => setShowCustomers(false)} />}
@@ -375,7 +382,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
   const isIncome = kind === "income";
   const [chip, setChip] = useState("All");
   const [pendingOnly, setPendingOnly] = useState(false);
-  const chips = isIncome ? ["All", "Coir Pith", "Coir Bale"] : ["All", "Salaries", "Current bill", "Maintenance", "Husk"];
+  const chips = isIncome ? ["All", "Coir Pith", "Coir Bale"] : ["All", "Salaries", "Current bill", "Maintenance", "Diesel", "Husk"];
 
   const filtered = rows.filter((row) => {
     if (chip !== "All") { const t = "product" in row ? row.product : row.category; if (t !== chip) return false; }
@@ -466,7 +473,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
 
 function CategoryBreakdown({ kind, rows }: { kind: "income" | "expense"; rows: (Income | Expense)[] }) {
   const isIncome = kind === "income";
-  const cats = isIncome ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Current bill", "Maintenance", "Husk"];
+  const cats = isIncome ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Current bill", "Maintenance", "Diesel", "Husk"];
   const data = cats.map((cat) => {
     const items = rows.filter((r) => (isIncome ? (r as Income).product : (r as Expense).category) === cat);
     let received = 0, pending = 0;
@@ -527,7 +534,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
   });
   const [showDate, setShowDate] = useState(false);
   const [error, setError] = useState("");
-  const options = kind === "income" ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Current bill", "Maintenance", "Husk"];
+  const options = kind === "income" ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Current bill", "Maintenance", "Diesel", "Husk"];
   const isHusk = kind === "expense" && choice === "Husk";
   const tripCount = Math.max(0, Number(trips) || 0);
   const autoKind = kind === "income" || isHusk;
@@ -627,7 +634,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
           ) : (
             <>
               <Text style={s.inputLabel}>{choice === "Maintenance" ? "DESCRIPTION" : "NAME"}</Text>
-              <SuggestInput testID="record-description-input" value={description} onChangeText={setDescription} placeholder={choice === "Maintenance" ? "What was repaired?" : choice === "Husk" ? "Supplier / batch name" : choice === "Current bill" ? "Bill name / provider" : "Employee name"} suggestions={suggestExpenseNames} />
+              <SuggestInput testID="record-description-input" value={description} onChangeText={setDescription} placeholder={choice === "Maintenance" ? "What was repaired?" : choice === "Husk" ? "Supplier / batch name" : choice === "Current bill" ? "Bill name / provider" : choice === "Diesel" ? "Pump / supplier name" : "Employee name"} suggestions={suggestExpenseNames} />
               {isHusk && (
                 <>
                   <Text style={s.inputLabel}>NUMBER OF TRIPS</Text>
@@ -898,9 +905,15 @@ function DayDetailModal({ dateKey, incomes, expenses, onClose }: { dateKey: stri
   );
 }
 
-function RemindersModal({ incomes, overdueDays, setOverdueDays, onSettle, onOpenPayment, onClose }: { incomes: Income[]; overdueDays: number; setOverdueDays: (n: number) => void; onSettle: (id: string) => void; onOpenPayment: (id: string) => void; onClose: () => void }) {
+function RemindersModal({ incomes, expenses, overdueDays, setOverdueDays, onSettle, onSettleExpense, onOpenPayment, onClose }: { incomes: Income[]; expenses: Expense[]; overdueDays: number; setOverdueDays: (n: number) => void; onSettle: (id: string) => void; onSettleExpense: (id: string) => void; onOpenPayment: (id: string) => void; onClose: () => void }) {
+  const [mode, setMode] = useState<"receivables" | "payables">("receivables");
+  const isRec = mode === "receivables";
   const overdue = incomes.filter(hasDue).map((r) => ({ r, days: daysSince(r.date) })).filter((x) => x.days >= overdueDays).sort((a, b) => b.days - a.days);
+  const payDue = expenses.filter((e) => expenseDue(e) > 0.009).map((r) => ({ r, days: daysSince(r.date) })).filter((x) => x.days >= overdueDays).sort((a, b) => b.days - a.days);
   const totalOverdue = overdue.reduce((sum, x) => sum + dueOf(x.r), 0);
+  const totalPay = payDue.reduce((sum, x) => sum + expenseDue(x.r), 0);
+  const activeTotal = isRec ? totalOverdue : totalPay;
+  const activeCount = isRec ? overdue.length : payDue.length;
   return (
     <Modal animationType="slide" transparent visible onRequestClose={onClose}>
       <View style={s.modalWrap}>
@@ -909,9 +922,13 @@ function RemindersModal({ incomes, overdueDays, setOverdueDays, onSettle, onOpen
           <View style={[s.formHead, s.detailHeaderPad]}>
             <View>
               <Text style={s.detailOverline}>PAYMENT REMINDERS</Text>
-              <Text style={s.formTitle}>Overdue</Text>
+              <Text style={s.formTitle}>{isRec ? "To collect" : "To pay"}</Text>
             </View>
             <Pressable testID="reminders-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
+          </View>
+          <View style={[s.modeToggle, { marginHorizontal: 20, marginBottom: 4 }]}>
+            <Pressable testID="reminders-tab-receivables" onPress={() => setMode("receivables")} style={[s.modeBtn, isRec && s.modeBtnSel]}><Text style={[s.modeText, isRec && s.modeTextSel]}>Customers owe you</Text></Pressable>
+            <Pressable testID="reminders-tab-payables" onPress={() => setMode("payables")} style={[s.modeBtn, !isRec && s.modeBtnSel]}><Text style={[s.modeText, !isRec && s.modeTextSel]}>You owe suppliers</Text></Pressable>
           </View>
           <ScrollView testID="reminders-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
             <Text style={s.detailSectionLabel}>OLDER THAN</Text>
@@ -923,27 +940,47 @@ function RemindersModal({ incomes, overdueDays, setOverdueDays, onSettle, onOpen
               ))}
             </View>
             <View style={s.reminderTotal}>
-              <Text style={s.reminderTotalLabel}>{overdue.length} pending{overdueDays ? ` · beyond ${overdueDays} days` : ""}</Text>
-              <Text style={s.reminderTotalAmt}>{money(totalOverdue)}</Text>
+              <Text style={s.reminderTotalLabel}>{activeCount} pending{overdueDays ? ` · beyond ${overdueDays} days` : ""}</Text>
+              <Text style={s.reminderTotalAmt}>{money(activeTotal)}</Text>
             </View>
-            {overdue.length === 0 ? (
-              <View style={s.empty}>
-                <MaterialCommunityIcons name="check-circle-outline" size={30} color={C.income} />
-                <Text style={s.emptyTitle}>Nothing overdue</Text>
-                <Text style={s.emptyCopy}>{overdueDays ? `No dues older than ${overdueDays} days.` : "No pending dues right now."}</Text>
-              </View>
-            ) : overdue.map(({ r, days }) => (
-              <View key={r.id} testID="reminder-row" style={s.detailRow}>
-                <Pressable style={s.detailRowMain} testID="reminder-open-payment" onPress={() => onOpenPayment(r.id)}>
-                  <Text style={s.detailRowTitle}>{r.name || "Unnamed customer"}</Text>
-                  <Text style={s.reminderMeta}>{r.product} · {days} days overdue · due {money(dueOf(r))}</Text>
-                </Pressable>
-                <View style={s.reminderRight}>
-                  <Pressable testID="reminder-whatsapp" hitSlop={8} onPress={() => openWhatsApp(waReminder(r.name, dueOf(r), days), r.phone)} style={s.waSmall}><MaterialCommunityIcons name="whatsapp" size={13} color="#fff" /><Text style={s.waSmallText}>Remind</Text></Pressable>
-                  <Pressable testID="reminder-mark-paid" hitSlop={8} onPress={() => onSettle(r.id)} style={s.markPaid}><Text style={s.markPaidText}>Mark paid</Text></Pressable>
+            {isRec ? (
+              overdue.length === 0 ? (
+                <View style={s.empty}>
+                  <MaterialCommunityIcons name="check-circle-outline" size={30} color={C.income} />
+                  <Text style={s.emptyTitle}>Nothing to collect</Text>
+                  <Text style={s.emptyCopy}>{overdueDays ? `No customer dues older than ${overdueDays} days.` : "No pending customer dues right now."}</Text>
                 </View>
-              </View>
-            ))}
+              ) : overdue.map(({ r, days }) => (
+                <View key={r.id} testID="reminder-row" style={s.detailRow}>
+                  <Pressable style={s.detailRowMain} testID="reminder-open-payment" onPress={() => onOpenPayment(r.id)}>
+                    <Text style={s.detailRowTitle}>{r.name || "Unnamed customer"}</Text>
+                    <Text style={s.reminderMeta}>{r.product} · {days} days overdue · due {money(dueOf(r))}</Text>
+                  </Pressable>
+                  <View style={s.reminderRight}>
+                    <Pressable testID="reminder-whatsapp" hitSlop={8} onPress={() => openWhatsApp(waReminder(r.name, dueOf(r), days), r.phone)} style={s.waSmall}><MaterialCommunityIcons name="whatsapp" size={13} color="#fff" /><Text style={s.waSmallText}>Remind</Text></Pressable>
+                    <Pressable testID="reminder-mark-paid" hitSlop={8} onPress={() => onSettle(r.id)} style={s.markPaid}><Text style={s.markPaidText}>Mark paid</Text></Pressable>
+                  </View>
+                </View>
+              ))
+            ) : (
+              payDue.length === 0 ? (
+                <View style={s.empty}>
+                  <MaterialCommunityIcons name="check-circle-outline" size={30} color={C.income} />
+                  <Text style={s.emptyTitle}>Nothing to pay</Text>
+                  <Text style={s.emptyCopy}>{overdueDays ? `No supplier dues older than ${overdueDays} days.` : "No pending supplier dues right now."}</Text>
+                </View>
+              ) : payDue.map(({ r, days }) => (
+                <View key={r.id} testID="payable-row" style={s.detailRow}>
+                  <View style={s.detailRowMain}>
+                    <Text style={s.detailRowTitle}>{r.description || r.category}</Text>
+                    <Text style={s.reminderMeta}>{r.category} · {days} days · owe {money(expenseDue(r))}</Text>
+                  </View>
+                  <View style={s.reminderRight}>
+                    <Pressable testID="payable-mark-paid" hitSlop={8} onPress={() => onSettleExpense(r.id)} style={s.markPaid}><Text style={s.markPaidText}>Mark paid</Text></Pressable>
+                  </View>
+                </View>
+              ))
+            )}
             <View style={{ height: 30 }} />
           </ScrollView>
         </View>
@@ -1164,7 +1201,7 @@ function CategoryTrends({ incomes, expenses, year, monthIndex, monthName }: { in
   const prevName = new Intl.DateTimeFormat("en-IN", { month: "short" }).format(prev);
   const inMonth = (dateStr: string, y: number, m: number) => { const d = new Date(dateStr); return d.getFullYear() === y && d.getMonth() === m; };
   const incCats = ["Coir Pith", "Coir Bale"] as const;
-  const expCats = ["Salaries", "Current bill", "Maintenance", "Husk"] as const;
+  const expCats = ["Salaries", "Current bill", "Maintenance", "Diesel", "Husk"] as const;
   const rows = [
     ...incCats.map((cat) => ({
       cat, type: "income" as const,
@@ -1287,6 +1324,7 @@ function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expen
   const [mode, setMode] = useState<"customers" | "suppliers">("customers");
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState("");
 
   const build = (isCustomer: boolean): Map<string, Entity> => {
     const map = new Map<string, Entity>();
@@ -1304,6 +1342,7 @@ function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expen
   const isCustomer = mode === "customers";
   const map = build(isCustomer);
   const list = [...map.values()].sort((a, b) => b.pending - a.pending || b.total - a.total);
+  const filteredList = q.trim() ? list.filter((v) => v.name.toLowerCase().includes(q.trim().toLowerCase())) : list;
   const active = selected ? map.get(selected) : null;
   const accent = isCustomer ? C.income : C.expense;
 
@@ -1335,8 +1374,16 @@ function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expen
 
           {!active && (
             <View style={[s.modeToggle, { marginHorizontal: 20, marginBottom: 4 }]}>
-              <Pressable testID="vendors-tab-customers" onPress={() => setMode("customers")} style={[s.modeBtn, isCustomer && s.modeBtnSel]}><Text style={[s.modeText, isCustomer && s.modeTextSel]}>Customers</Text></Pressable>
-              <Pressable testID="vendors-tab-suppliers" onPress={() => setMode("suppliers")} style={[s.modeBtn, !isCustomer && s.modeBtnSel]}><Text style={[s.modeText, !isCustomer && s.modeTextSel]}>Suppliers</Text></Pressable>
+              <Pressable testID="vendors-tab-customers" onPress={() => { setMode("customers"); setQ(""); }} style={[s.modeBtn, isCustomer && s.modeBtnSel]}><Text style={[s.modeText, isCustomer && s.modeTextSel]}>Customers</Text></Pressable>
+              <Pressable testID="vendors-tab-suppliers" onPress={() => { setMode("suppliers"); setQ(""); }} style={[s.modeBtn, !isCustomer && s.modeBtnSel]}><Text style={[s.modeText, !isCustomer && s.modeTextSel]}>Suppliers</Text></Pressable>
+            </View>
+          )}
+
+          {!active && (
+            <View style={[s.searchRow, { marginHorizontal: 20, marginBottom: 6 }]}>
+              <MaterialCommunityIcons name="magnify" size={20} color={C.muted} />
+              <TextInput testID="vendors-search-input" value={q} onChangeText={setQ} placeholder={isCustomer ? "Search customers…" : "Search suppliers…"} placeholderTextColor="#9DA49D" style={s.searchInput} returnKeyType="search" />
+              {q ? <Pressable testID="vendors-search-clear" onPress={() => setQ("")}><MaterialCommunityIcons name="close-circle" size={19} color={C.muted} /></Pressable> : null}
             </View>
           )}
 
@@ -1369,13 +1416,13 @@ function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expen
             </ScrollView>
           ) : (
             <ScrollView testID="vendors-modal" style={s.detailScroll} showsVerticalScrollIndicator={false}>
-              {list.length === 0 ? (
+              {filteredList.length === 0 ? (
                 <View style={s.empty}>
                   <MaterialCommunityIcons name="account-search-outline" size={30} color={C.action} />
-                  <Text style={s.emptyTitle}>{isCustomer ? "No customers yet" : "No suppliers yet"}</Text>
-                  <Text style={s.emptyCopy}>{isCustomer ? "Add income with a customer name to see totals." : "Add expenses with a supplier name to see totals."}</Text>
+                  <Text style={s.emptyTitle}>{q.trim() ? "No matches" : isCustomer ? "No customers yet" : "No suppliers yet"}</Text>
+                  <Text style={s.emptyCopy}>{q.trim() ? "Try a different name." : isCustomer ? "Add income with a customer name to see totals." : "Add expenses with a supplier name to see totals."}</Text>
                 </View>
-              ) : list.map((v) => (
+              ) : filteredList.map((v) => (
                 <Pressable key={v.name} testID="vendor-row" onPress={() => setSelected(v.name)} style={s.vendorRow}>
                   <View style={s.detailRowMain}>
                     <Text style={s.detailRowTitle}>{v.name}</Text>
