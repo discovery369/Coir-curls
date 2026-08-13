@@ -9,14 +9,18 @@ import { useEffect, useMemo, useState } from "react";
 import { Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 type Payment = { id: string; date: string; amount: number };
-type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; phone?: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[]; photo?: string };
-type Expense = { id: string; date: string; category: "Salaries" | "Maintenance" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending"; photo?: string };
+type Income = { id: string; date: string; product: string; amount: number; name: string; address: string; phone?: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[]; photo?: string; photos?: string[] };
+type Expense = { id: string; date: string; category: string; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending"; photo?: string; photos?: string[] };
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
 type Backup = { id: string; createdAt: string; incomes: Income[]; expenses: Expense[] };
+type Categories = { income: string[]; expense: string[] };
 
 const C = { canvas: "#F5F0E7", surface: "#FFFDF8", ink: "#1F2924", muted: "#59635C", line: "#D8D1C4", forest: "#173C2C", income: "#2F7D57", expense: "#B65A43", action: "#C76B35", highlight: "#E8D5A7", nav: "#203029", blue: "#2F6FB0" };
 const STORAGE_KEY = "coir-ledger-records-v1";
 const BACKUPS_KEY = "svkd-coir-backups-v1";
+const CATS_KEY = "svkd-coir-categories-v1";
+const DEFAULT_INCOME_CATS = ["Coir Pith", "Coir Bale"];
+const DEFAULT_EXPENSE_CATS = ["Salaries", "Maintenance", "Husk"];
 const TONS_PER_TRIP = 4; // each husk load ~4 tons -> 1 ton coir + 3 ton pith
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -46,11 +50,12 @@ const toNum = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ?
 const toStr = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
 const toIso = (v: unknown) => { const d = new Date(toStr(v)); return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString(); };
 const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const EXPENSE_CATS = ["Salaries", "Maintenance", "Husk"];
+const photosOf = (r: { photo?: string; photos?: string[] }) => (r.photos && r.photos.length ? r.photos : (r.photo ? [r.photo] : []));
+const toStrArr = (v: unknown) => (Array.isArray(v) ? v.map(toStr).filter(Boolean) : []);
 const sanitizeIncome = (r: Record<string, unknown>): Income => ({
   id: toStr(r.id) || genId(),
   date: toIso(r.date),
-  product: r.product === "Coir Bale" ? "Coir Bale" : "Coir Pith",
+  product: toStr(r.product) || "Coir Pith",
   amount: toNum(r.amount),
   name: toStr(r.name),
   address: toStr(r.address),
@@ -59,12 +64,12 @@ const sanitizeIncome = (r: Record<string, unknown>): Income => ({
   tons: toNum(r.tons),
   costPerTon: toNum(r.costPerTon),
   payments: Array.isArray(r.payments) ? (r.payments as Record<string, unknown>[]).map((p) => ({ id: toStr(p?.id) || genId(), date: toIso(p?.date), amount: toNum(p?.amount) })) : [],
-  photo: toStr(r.photo),
+  photos: toStrArr(r.photos).length ? toStrArr(r.photos) : (toStr(r.photo) ? [toStr(r.photo)] : []),
 });
 const sanitizeExpense = (r: Record<string, unknown>): Expense => ({
   id: toStr(r.id) || genId(),
   date: toIso(r.date),
-  category: (EXPENSE_CATS.includes(r.category as string) ? r.category : "Maintenance") as Expense["category"],
+  category: toStr(r.category) || "Maintenance",
   amount: toNum(r.amount),
   repairAmount: toNum(r.repairAmount),
   description: toStr(r.description),
@@ -76,7 +81,7 @@ const sanitizeExpense = (r: Record<string, unknown>): Expense => ({
   pithOutput: toNum(r.pithOutput),
   trips: toNum(r.trips),
   status: r.status === "pending" ? "pending" : "paid",
-  photo: toStr(r.photo),
+  photos: toStrArr(r.photos).length ? toStrArr(r.photos) : (toStr(r.photo) ? [toStr(r.photo)] : []),
 });
 
 export default function Index() {
@@ -97,7 +102,10 @@ export default function Index() {
   const [backups, setBackups] = useState<Backup[]>([]);
   const [backupsReady, setBackupsReady] = useState(false);
   const [showVendors, setShowVendors] = useState(false);
-  const [viewingPhoto, setViewingPhoto] = useState<string | null>(null);
+  const [viewingPhotos, setViewingPhotos] = useState<{ list: string[]; index: number } | null>(null);
+  const [showCategories, setShowCategories] = useState(false);
+  const [categories, setCategories] = useState<Categories>({ income: DEFAULT_INCOME_CATS, expense: DEFAULT_EXPENSE_CATS });
+  const [catsReady, setCatsReady] = useState(false);
   const nameOptions = useMemo(() => Array.from(new Set(incomes.map((i) => i.name).filter(Boolean))), [incomes]);
   const addressOptions = useMemo(() => Array.from(new Set(incomes.map((i) => i.address).filter(Boolean))), [incomes]);
   const expenseNameOptions = useMemo(() => Array.from(new Set(expenses.map((e) => e.description).filter(Boolean))), [expenses]);
@@ -113,6 +121,20 @@ export default function Index() {
 
   useEffect(() => { AsyncStorage.getItem(BACKUPS_KEY).then((raw) => { if (raw) setBackups(JSON.parse(raw)); setBackupsReady(true); }); }, []);
   useEffect(() => { if (backupsReady) AsyncStorage.setItem(BACKUPS_KEY, JSON.stringify(backups)); }, [backups, backupsReady]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(CATS_KEY).then((raw) => {
+      if (raw) { const c = JSON.parse(raw); setCategories({ income: Array.isArray(c.income) && c.income.length ? c.income : DEFAULT_INCOME_CATS, expense: Array.isArray(c.expense) && c.expense.length ? c.expense : DEFAULT_EXPENSE_CATS }); }
+      setCatsReady(true);
+    });
+  }, []);
+  useEffect(() => { if (catsReady) AsyncStorage.setItem(CATS_KEY, JSON.stringify(categories)); }, [categories, catsReady]);
+  const addCategory = (kind: "income" | "expense", name: string) => {
+    const clean = name.trim();
+    if (!clean) return;
+    setCategories((prev) => prev[kind].some((c) => c.toLowerCase() === clean.toLowerCase()) ? prev : { ...prev, [kind]: [...prev[kind], clean] });
+  };
+  const deleteCategory = (kind: "income" | "expense", name: string) => setCategories((prev) => ({ ...prev, [kind]: prev[kind].filter((c) => c !== name) }));
 
   const totalIncome = useMemo(() => incomes.reduce((sum, row) => sum + row.amount, 0), [incomes]);
   const totalExpenses = useMemo(() => expenses.reduce((sum, row) => sum + row.amount + (row.repairAmount || 0), 0), [expenses]);
@@ -159,6 +181,7 @@ export default function Index() {
             onOpenCustomers={() => setShowCustomers(true)}
             onOpenBackups={() => setShowBackups(true)}
             onOpenVendors={() => setShowVendors(true)}
+            onOpenCategories={() => setShowCategories(true)}
             onRestore={(inc, exp) => { setIncomes(inc); setExpenses(exp); }}
             requestConfirm={setConfirm}
             onClear={() => setConfirm({ title: "Clear all records?", message: "This cannot be undone.", confirmLabel: "Clear all", onConfirm: () => { setIncomes([]); setExpenses([]); } })}
@@ -219,8 +242,8 @@ export default function Index() {
 
             <Filters query={query} setQuery={setQuery} dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} />
 
-            {(tab === "overview" || tab === "income") && <Ledger kind="income" rows={incomes} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("income")} onEdit={(id) => open("income", id)} onDelete={remove} onOpenPayment={(id) => setPaying(id)} onViewPhoto={setViewingPhoto} />}
-            {(tab === "overview" || tab === "expenses") && <Ledger kind="expense" rows={expenses} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("expense")} onEdit={(id) => open("expense", id)} onDelete={remove} onViewPhoto={setViewingPhoto} />}
+            {(tab === "overview" || tab === "income") && <Ledger kind="income" rows={incomes} categories={categories.income} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("income")} onEdit={(id) => open("income", id)} onDelete={remove} onOpenPayment={(id) => setPaying(id)} onViewPhotos={(list, index) => setViewingPhotos({ list, index })} />}
+            {(tab === "overview" || tab === "expenses") && <Ledger kind="expense" rows={expenses} categories={categories.expense} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("expense")} onEdit={(id) => open("expense", id)} onDelete={remove} onViewPhotos={(list, index) => setViewingPhotos({ list, index })} />}
           </>
         )}
       </ScrollView>
@@ -250,6 +273,8 @@ export default function Index() {
       {editing && (
         <RecordForm
           kind={editing.kind}
+          categories={editing.kind === "income" ? categories.income : categories.expense}
+          onAddCategory={(name) => addCategory(editing.kind, name)}
           suggestNames={nameOptions}
           suggestAddresses={addressOptions}
           suggestExpenseNames={expenseNameOptions}
@@ -266,7 +291,8 @@ export default function Index() {
       {showReminders && <RemindersModal incomes={incomes} expenses={expenses} overdueDays={overdueDays} setOverdueDays={setOverdueDays} onSettle={settleIncome} onSettleExpense={settleExpense} onOpenPayment={(id) => { setShowReminders(false); setPaying(id); }} onClose={() => setShowReminders(false)} />}
       {showBackups && <LocalBackupsModal backups={backups} onCreate={createBackup} onRestore={restoreBackup} onDelete={deleteBackup} requestConfirm={setConfirm} onClose={() => setShowBackups(false)} />}
       {showVendors && <VendorsModal incomes={incomes} expenses={expenses} onClose={() => setShowVendors(false)} />}
-      {viewingPhoto && <PhotoViewerModal uri={viewingPhoto} onClose={() => setViewingPhoto(null)} />}
+      {viewingPhotos && <PhotoViewerModal list={viewingPhotos.list} index={viewingPhotos.index} onClose={() => setViewingPhotos(null)} />}
+      {showCategories && <CategoriesModal categories={categories} onAdd={addCategory} onDelete={deleteCategory} requestConfirm={setConfirm} onClose={() => setShowCategories(false)} />}
       {showCustomers && <CustomersModal incomes={incomes} onClose={() => setShowCustomers(false)} />}
       {payingRecord && <PaymentModal record={payingRecord} onChange={updateIncome} onClose={() => setPaying(null)} />}
 
@@ -365,7 +391,7 @@ function SuggestInput({ testID, value, onChangeText, placeholder, suggestions }:
   );
 }
 
-function PhotoAttach({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function PhotoAttach({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
   const [blocked, setBlocked] = useState<"" | "camera" | "gallery">("");
   const [busy, setBusy] = useState(false);
 
@@ -384,7 +410,7 @@ function PhotoAttach({ value, onChange }: { value: string; onChange: (v: string)
           if (status !== "granted") { if (!req.canAskAgain) setBlocked("camera"); return; }
         }
         const res = await ImagePicker.launchCameraAsync({ mediaTypes: ["images"], quality: 0.5, base64: true, allowsEditing: true });
-        if (!res.canceled && res.assets?.[0]?.base64) onChange(`data:image/jpeg;base64,${res.assets[0].base64}`);
+        if (!res.canceled && res.assets?.[0]?.base64) onChange([...value, `data:image/jpeg;base64,${res.assets[0].base64}`]);
       } else {
         const cur = await ImagePicker.getMediaLibraryPermissionsAsync();
         let status = cur.status;
@@ -394,38 +420,42 @@ function PhotoAttach({ value, onChange }: { value: string; onChange: (v: string)
           status = req.status;
           if (status !== "granted") { if (!req.canAskAgain) setBlocked("gallery"); return; }
         }
-        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.5, base64: true, allowsEditing: true });
-        if (!res.canceled && res.assets?.[0]?.base64) onChange(`data:image/jpeg;base64,${res.assets[0].base64}`);
+        const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.5, base64: true, allowsEditing: true, allowsMultipleSelection: true, selectionLimit: 6 });
+        if (!res.canceled && res.assets?.length) {
+          const added = res.assets.map((a) => (a.base64 ? `data:image/jpeg;base64,${a.base64}` : "")).filter(Boolean);
+          if (added.length) onChange([...value, ...added]);
+        }
       }
     } catch { /* cancelled or unavailable */ } finally { setBusy(false); }
   };
 
+  const removeAt = (i: number) => onChange(value.filter((_, idx) => idx !== i));
+
   return (
     <View>
-      <Text style={s.inputLabel}>PHOTO / RECEIPT (OPTIONAL)</Text>
-      {value ? (
-        <View testID="photo-preview" style={s.photoPreviewWrap}>
-          <Image source={{ uri: value }} style={s.photoPreview} resizeMode="cover" />
-          <Pressable testID="photo-remove-button" onPress={() => onChange("")} style={s.photoRemove}>
-            <MaterialCommunityIcons name="close" size={16} color="#fff" />
-          </Pressable>
-          <Pressable testID="photo-replace-button" onPress={() => pick("gallery")} style={s.photoReplace}>
-            <MaterialCommunityIcons name="image-edit-outline" size={15} color={C.forest} />
-            <Text style={s.photoReplaceText}>Replace</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <View style={s.photoButtons}>
-          <Pressable testID="photo-camera-button" onPress={() => pick("camera")} disabled={busy} style={s.photoBtn}>
-            <MaterialCommunityIcons name="camera-outline" size={19} color={C.forest} />
-            <Text style={s.photoBtnText}>Take photo</Text>
-          </Pressable>
-          <Pressable testID="photo-gallery-button" onPress={() => pick("gallery")} disabled={busy} style={s.photoBtn}>
-            <MaterialCommunityIcons name="image-multiple-outline" size={19} color={C.forest} />
-            <Text style={s.photoBtnText}>Choose from gallery</Text>
-          </Pressable>
+      <Text style={s.inputLabel}>PHOTOS / RECEIPTS (OPTIONAL)</Text>
+      {value.length > 0 && (
+        <View testID="photo-preview" style={s.photoGrid}>
+          {value.map((uri, i) => (
+            <View key={i} style={s.photoThumbBox}>
+              <Image source={{ uri }} style={s.photoThumbImg} resizeMode="cover" />
+              <Pressable testID={`photo-remove-${i}`} onPress={() => removeAt(i)} style={s.photoThumbRemove}>
+                <MaterialCommunityIcons name="close" size={14} color="#fff" />
+              </Pressable>
+            </View>
+          ))}
         </View>
       )}
+      <View style={s.photoButtons}>
+        <Pressable testID="photo-camera-button" onPress={() => pick("camera")} disabled={busy} style={s.photoBtn}>
+          <MaterialCommunityIcons name="camera-outline" size={19} color={C.forest} />
+          <Text style={s.photoBtnText}>Take photo</Text>
+        </Pressable>
+        <Pressable testID="photo-gallery-button" onPress={() => pick("gallery")} disabled={busy} style={s.photoBtn}>
+          <MaterialCommunityIcons name="image-multiple-outline" size={19} color={C.forest} />
+          <Text style={s.photoBtnText}>{value.length > 0 ? "Add more" : "Choose from gallery"}</Text>
+        </Pressable>
+      </View>
       {blocked ? (
         <View testID="photo-permission-blocked" style={s.photoPermBox}>
           <Text style={s.photoPermText}>{blocked === "camera" ? "Camera access is blocked." : "Gallery access is blocked."} Enable it in Settings to add a photo.</Text>
@@ -439,15 +469,30 @@ function PhotoAttach({ value, onChange }: { value: string; onChange: (v: string)
   );
 }
 
-function PhotoViewerModal({ uri, onClose }: { uri: string; onClose: () => void }) {
+function PhotoViewerModal({ list, index, onClose }: { list: string[]; index: number; onClose: () => void }) {
+  const [i, setI] = useState(index);
+  const total = list.length;
+  const uri = list[Math.max(0, Math.min(i, total - 1))];
   return (
     <Modal animationType="fade" transparent visible onRequestClose={onClose}>
-      <Pressable testID="photo-viewer" style={s.photoViewerWrap} onPress={onClose}>
-        <Image source={{ uri }} style={s.photoViewerImage} resizeMode="contain" />
+      <View testID="photo-viewer" style={s.photoViewerWrap}>
+        <Pressable style={s.photoViewerBackdrop} onPress={onClose} />
+        <Image source={{ uri }} style={[s.photoViewerImage, { pointerEvents: "none" }]} resizeMode="contain" />
+        {total > 1 && (
+          <>
+            <Pressable testID="photo-viewer-prev" onPress={() => setI((v) => (v - 1 + total) % total)} style={[s.photoNav, { left: 12 }]}>
+              <MaterialCommunityIcons name="chevron-left" size={30} color="#fff" />
+            </Pressable>
+            <Pressable testID="photo-viewer-next" onPress={() => setI((v) => (v + 1) % total)} style={[s.photoNav, { right: 12 }]}>
+              <MaterialCommunityIcons name="chevron-right" size={30} color="#fff" />
+            </Pressable>
+            <View style={s.photoCounter}><Text style={s.photoCounterText}>{(i % total + total) % total + 1} / {total}</Text></View>
+          </>
+        )}
         <Pressable testID="photo-viewer-close" onPress={onClose} style={s.photoViewerClose}>
           <MaterialCommunityIcons name="close" size={26} color="#fff" />
         </Pressable>
-      </Pressable>
+      </View>
     </Modal>
   );
 }
@@ -485,11 +530,13 @@ function Filters({ query, setQuery, dateFrom, dateTo, setDateFrom, setDateTo }: 
   );
 }
 
-function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, onOpenPayment, onViewPhoto }: { kind: "income" | "expense"; rows: (Income | Expense)[]; query: string; dateFrom: Date | null; dateTo: Date | null; onAdd: () => void; onEdit: (id: string) => void; onDelete: (kind: "income" | "expense", id: string) => void; onOpenPayment?: (id: string) => void; onViewPhoto?: (uri: string) => void }) {
+function Ledger({ kind, rows, categories, query, dateFrom, dateTo, onAdd, onEdit, onDelete, onOpenPayment, onViewPhotos }: { kind: "income" | "expense"; rows: (Income | Expense)[]; categories: string[]; query: string; dateFrom: Date | null; dateTo: Date | null; onAdd: () => void; onEdit: (id: string) => void; onDelete: (kind: "income" | "expense", id: string) => void; onOpenPayment?: (id: string) => void; onViewPhotos?: (list: string[], index: number) => void }) {
   const isIncome = kind === "income";
   const [chip, setChip] = useState("All");
   const [pendingOnly, setPendingOnly] = useState(false);
-  const chips = isIncome ? ["All", "Coir Pith", "Coir Bale"] : ["All", "Salaries", "Maintenance", "Husk"];
+  const catOf = (r: Income | Expense) => ("product" in r ? r.product : r.category);
+  const extraCats = Array.from(new Set(rows.map(catOf))).filter((c) => c && !categories.includes(c));
+  const chips = ["All", ...categories, ...extraCats];
 
   const filtered = rows.filter((row) => {
     if (chip !== "All") { const t = "product" in row ? row.product : row.category; if (t !== chip) return false; }
@@ -565,10 +612,13 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
                   <Text style={[s.badgeText, { color: due > 0 ? C.action : C.income }]}>{due > 0 ? "PENDING" : "PAID"}</Text>
                 </View>
               )}
-              {row.photo ? (
-                <Pressable testID="row-photo-thumb" onPress={() => onViewPhoto?.(row.photo as string)} style={s.rowPhotoWrap}>
-                  <Image source={{ uri: row.photo }} style={s.rowPhoto} resizeMode="cover" />
-                  <View style={s.rowPhotoBadge}><MaterialCommunityIcons name="magnify-plus-outline" size={11} color="#fff" /></View>
+              {photosOf(row).length > 0 ? (
+                <Pressable testID="row-photo-thumb" onPress={() => onViewPhotos?.(photosOf(row), 0)} style={s.rowPhotoWrap}>
+                  <Image source={{ uri: photosOf(row)[0] }} style={s.rowPhoto} resizeMode="cover" />
+                  <View style={s.rowPhotoBadge}>
+                    <MaterialCommunityIcons name={photosOf(row).length > 1 ? "image-multiple" : "magnify-plus-outline"} size={11} color="#fff" />
+                    {photosOf(row).length > 1 ? <Text style={s.rowPhotoCount}>{photosOf(row).length}</Text> : null}
+                  </View>
                 </Pressable>
               ) : null}
             </View>
@@ -586,7 +636,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
 
 function CategoryBreakdown({ kind, rows }: { kind: "income" | "expense"; rows: (Income | Expense)[] }) {
   const isIncome = kind === "income";
-  const cats = isIncome ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Maintenance", "Husk"];
+  const cats = Array.from(new Set(rows.map((r) => (isIncome ? (r as Income).product : (r as Expense).category)).filter(Boolean)));
   const data = cats.map((cat) => {
     const items = rows.filter((r) => (isIncome ? (r as Income).product : (r as Expense).category) === cat);
     let received = 0, pending = 0;
@@ -601,7 +651,7 @@ function CategoryBreakdown({ kind, rows }: { kind: "income" | "expense"; rows: (
   return (
     <View testID={`${kind}-category-breakdown`} style={s.breakdownCard}>
       <View style={s.breakdownHeadRow}>
-        <Text style={s.breakdownTitle}>{isIncome ? "PITH & BALE TOTALS" : "CATEGORY TOTALS"}</Text>
+        <Text style={s.breakdownTitle}>{isIncome ? "PRODUCT TOTALS" : "CATEGORY TOTALS"}</Text>
         <View style={s.breakdownLegend}>
           <Text style={s.breakdownLegendReceived}>● {receivedLabel}</Text>
           <Text style={s.breakdownLegendPending}>● PENDING</Text>
@@ -627,10 +677,10 @@ function describeRow(row: Income | Expense) {
   return `${row.category}${row.description ? ` · ${row.description}` : ""}`;
 }
 
-function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddresses, suggestExpenseNames }: { kind: "income" | "expense"; record?: Income | Expense; onClose: () => void; onSave: (record: Income | Expense) => void; suggestNames: string[]; suggestAddresses: string[]; suggestExpenseNames: string[] }) {
+function RecordForm({ kind, record, categories, onAddCategory, onClose, onSave, suggestNames, suggestAddresses, suggestExpenseNames }: { kind: "income" | "expense"; record?: Income | Expense; categories: string[]; onAddCategory: (name: string) => void; onClose: () => void; onSave: (record: Income | Expense) => void; suggestNames: string[]; suggestAddresses: string[]; suggestExpenseNames: string[] }) {
   const [date, setDate] = useState(record ? new Date(record.date) : new Date());
   const [amount, setAmount] = useState(record ? String(record.amount) : "");
-  const [choice, setChoice] = useState<string>(record ? ("product" in record ? record.product : record.category) : kind === "income" ? "Coir Pith" : "Salaries");
+  const [choice, setChoice] = useState<string>(record ? ("product" in record ? record.product : record.category) : categories[0] || (kind === "income" ? "Coir Pith" : "Salaries"));
   const [name, setName] = useState(record && "name" in record ? record.name : "");
   const [address, setAddress] = useState(record && "address" in record ? record.address : "");
   const [phone, setPhone] = useState(record && "phone" in record && record.phone ? record.phone : "");
@@ -647,8 +697,10 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
   });
   const [showDate, setShowDate] = useState(false);
   const [error, setError] = useState("");
-  const [photo, setPhoto] = useState(record && "photo" in record && record.photo ? record.photo : "");
-  const options = kind === "income" ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Maintenance", "Husk"];
+  const [photos, setPhotos] = useState<string[]>(record ? photosOf(record) : []);
+  const [addingCat, setAddingCat] = useState(false);
+  const [newCat, setNewCat] = useState("");
+  const options = choice && !categories.includes(choice) ? [...categories, choice] : categories;
   const isHusk = kind === "expense" && choice === "Husk";
   const tripCount = Math.max(0, Number(trips) || 0);
   const autoKind = kind === "income" || isHusk;
@@ -666,10 +718,10 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
     if (!amount || !Number.isFinite(value) || value <= 0) return setError("Amount must be greater than ₹0");
     const base = { id: record?.id || String(Date.now()), date: date.toISOString(), amount: value };
     onSave(kind === "income"
-      ? { ...base, product: choice as Income["product"], name: name.trim(), address: address.trim(), phone: phone.trim(), status, tons: Number(tons) || 0, costPerTon: Number(incomeCost) || 0, photo }
+      ? { ...base, product: choice, name: name.trim(), address: address.trim(), phone: phone.trim(), status, tons: Number(tons) || 0, costPerTon: Number(incomeCost) || 0, photos }
       : {
           ...base,
-          category: choice as Expense["category"],
+          category: choice,
           repairAmount: 0,
           description: description.trim(),
           loads: isHusk ? tripCount : 0,
@@ -680,7 +732,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
           costPerTon: Number(costPerTrip) || 0,
           totalWeight: isHusk ? tripCount * TONS_PER_TRIP : 0,
           status,
-          photo,
+          photos,
         });
   };
 
@@ -713,7 +765,19 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
                 {choice === option && <MaterialCommunityIcons name="check" size={18} color="#fff" />}
               </Pressable>
             ))}
+            <Pressable testID="record-type-add" onPress={() => setAddingCat((v) => !v)} style={[s.option, s.optionAdd]}>
+              <MaterialCommunityIcons name={addingCat ? "close" : "plus"} size={16} color={C.action} />
+              <Text style={[s.optionText, { color: C.action }]}>{addingCat ? "Cancel" : "New"}</Text>
+            </Pressable>
           </View>
+          {addingCat && (
+            <View style={s.newCatRow}>
+              <TextInput testID="new-category-input" value={newCat} onChangeText={setNewCat} placeholder={kind === "income" ? "New product name" : "New category name"} placeholderTextColor="#9DA49D" style={[s.textInputBox, { flex: 1 }]} autoFocus returnKeyType="done" onSubmitEditing={() => { const n = newCat.trim(); if (n) { onAddCategory(n); setChoice(n); if (kind === "expense") setManualAmount(n !== "Husk"); } setNewCat(""); setAddingCat(false); }} />
+              <Pressable testID="new-category-save" onPress={() => { const n = newCat.trim(); if (n) { onAddCategory(n); setChoice(n); if (kind === "expense") setManualAmount(n !== "Husk"); } setNewCat(""); setAddingCat(false); }} style={s.newCatSave}>
+                <Text style={s.newCatSaveText}>Add</Text>
+              </Pressable>
+            </View>
+          )}
 
           {kind === "income" ? (
             <>
@@ -773,7 +837,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
             </>
           )}
 
-          <PhotoAttach value={photo} onChange={setPhoto} />
+          <PhotoAttach value={photos} onChange={setPhotos} />
 
           <View style={s.amountModeRow}>
             <Text style={s.inputLabel}>{autoKind && !manualAmount ? "AMOUNT (AUTO)" : "AMOUNT"}</Text>
@@ -1174,7 +1238,7 @@ function CustomersModal({ incomes, onClose }: { incomes: Income[]; onClose: () =
   );
 }
 
-function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, onOpenVendors, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onOpenBackups: () => void; onOpenVendors: () => void; onRestore: (inc: Income[], exp: Expense[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
+function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, onOpenVendors, onOpenCategories, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onOpenBackups: () => void; onOpenVendors: () => void; onOpenCategories: () => void; onRestore: (inc: Income[], exp: Expense[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
   const [notice, setNotice] = useState("");
 
   const doRestore = async () => {
@@ -1206,6 +1270,11 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, 
       <Pressable testID="open-vendors-button" style={s.settingRow} onPress={onOpenVendors}>
         <MaterialCommunityIcons name="swap-horizontal" size={22} color={C.forest} />
         <View style={s.settingCopy}><Text style={s.settingTitle}>Customers &amp; suppliers</Text><Text style={s.settingSub}>Separate lists for people you sell to and suppliers you pay. Tap to view history &amp; export a PDF.</Text></View>
+        <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
+      </Pressable>
+      <Pressable testID="open-categories-button" style={s.settingRow} onPress={onOpenCategories}>
+        <MaterialCommunityIcons name="tag-multiple-outline" size={22} color={C.forest} />
+        <View style={s.settingCopy}><Text style={s.settingTitle}>Manage categories</Text><Text style={s.settingSub}>Add your own income products &amp; expense categories.</Text></View>
         <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
       </Pressable>
       <Pressable testID="open-backups-button" style={s.settingRow} onPress={onOpenBackups}>
@@ -1317,8 +1386,8 @@ function CategoryTrends({ incomes, expenses, year, monthIndex, monthName }: { in
   const prev = new Date(year, monthIndex - 1, 1);
   const prevName = new Intl.DateTimeFormat("en-IN", { month: "short" }).format(prev);
   const inMonth = (dateStr: string, y: number, m: number) => { const d = new Date(dateStr); return d.getFullYear() === y && d.getMonth() === m; };
-  const incCats = ["Coir Pith", "Coir Bale"] as const;
-  const expCats = ["Salaries", "Maintenance", "Husk"] as const;
+  const incCats = Array.from(new Set(incomes.map((r) => r.product).filter(Boolean)));
+  const expCats = Array.from(new Set(expenses.map((r) => r.category).filter(Boolean)));
   const rows = [
     ...incCats.map((cat) => ({
       cat, type: "income" as const,
@@ -1561,6 +1630,52 @@ function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expen
   );
 }
 
+function CategoriesModal({ categories, onAdd, onDelete, requestConfirm, onClose }: { categories: Categories; onAdd: (kind: "income" | "expense", name: string) => void; onDelete: (kind: "income" | "expense", name: string) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void; onClose: () => void }) {
+  const [incNew, setIncNew] = useState("");
+  const [expNew, setExpNew] = useState("");
+  const section = (kind: "income" | "expense", list: string[], val: string, setVal: (v: string) => void) => (
+    <View style={{ marginBottom: 8 }}>
+      <Text style={s.detailSectionLabel}>{kind === "income" ? "INCOME PRODUCTS" : "EXPENSE CATEGORIES"}</Text>
+      {list.map((c) => (
+        <View key={c} testID={`category-row-${kind}`} style={s.catRow}>
+          <Text style={s.catName}>{c}</Text>
+          <Pressable testID={`category-delete-${kind}`} hitSlop={8} onPress={() => requestConfirm({ title: `Remove "${c}"?`, message: "It won't appear when adding new entries. Existing records keep this label.", confirmLabel: "Remove", onConfirm: () => onDelete(kind, c) })}>
+            <MaterialCommunityIcons name="trash-can-outline" size={19} color={C.expense} />
+          </Pressable>
+        </View>
+      ))}
+      <View style={s.newCatRow}>
+        <TextInput testID={`category-input-${kind}`} value={val} onChangeText={setVal} placeholder={kind === "income" ? "Add product (e.g. Coir Rope)" : "Add category (e.g. Rent)"} placeholderTextColor="#9DA49D" style={[s.textInputBox, { flex: 1 }]} returnKeyType="done" onSubmitEditing={() => { if (val.trim()) { onAdd(kind, val); setVal(""); } }} />
+        <Pressable testID={`category-add-${kind}`} onPress={() => { if (val.trim()) { onAdd(kind, val); setVal(""); } }} style={s.newCatSave}>
+          <Text style={s.newCatSaveText}>Add</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <View style={s.modalWrap}>
+        <View style={s.sheet}>
+          <View style={s.sheetHandle} />
+          <View style={[s.formHead, s.detailHeaderPad]}>
+            <View>
+              <Text style={s.detailOverline}>MANAGE CATEGORIES</Text>
+              <Text style={s.formTitle}>Categories</Text>
+            </View>
+            <Pressable testID="categories-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
+          </View>
+          <ScrollView testID="categories-modal" style={s.detailScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {section("income", categories.income, incNew, setIncNew)}
+            {section("expense", categories.expense, expNew, setExpNew)}
+            <View style={{ height: 30 }} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+
 const escapeHtml = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 const pdfStyle = `* { box-sizing: border-box; } body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1F2924; padding: 28px; } h1 { font-size: 22px; margin: 0; } .sub { color: #59635C; font-size: 12px; margin: 4px 0 20px; } .cards { display: flex; gap: 12px; margin-bottom: 22px; } .card { flex: 1; border: 1px solid #D8D1C4; border-radius: 8px; padding: 12px 14px; } .card .k { font-size: 10px; letter-spacing: 1px; color: #59635C; text-transform: uppercase; } .card .v { font-size: 18px; font-weight: 700; margin-top: 6px; } .inc { color: #2F7D57; } .exp { color: #B65A43; } h2 { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #C76B35; margin: 22px 0 8px; } table { width: 100%; border-collapse: collapse; font-size: 12px; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #E6DFD2; } th { background: #F0E9DC; font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: #59635C; } td.amt, th.amt { text-align: right; font-variant-numeric: tabular-nums; } td.empty { text-align: center; color: #9DA49D; font-style: italic; } tfoot td { font-weight: 700; border-top: 2px solid #1F2924; } .foot { margin-top: 26px; font-size: 10px; color: #9DA49D; } .receipts { margin-top: 8px; } .receipt { margin-bottom: 16px; page-break-inside: avoid; } .receipt .rcap { font-size: 11px; color: #59635C; margin-bottom: 6px; } .receipt img { max-width: 100%; max-height: 340px; border: 1px solid #D8D1C4; border-radius: 6px; }`;
 
@@ -1585,6 +1700,10 @@ function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totI
     <h2>Expenses</h2>
     <table><thead><tr><th>Date</th><th>Category</th><th>Details</th><th class="amt">Amount</th></tr></thead>
     <tbody>${expRows}</tbody><tfoot><tr><td colspan="3">Total expenses</td><td class="amt">${escapeHtml(money(totEx))}</td></tr></tfoot></table>
+    ${receiptsHTML([
+      ...incs.map((r) => ({ date: r.date, label: `${r.product}${r.name ? ` · ${r.name}` : ""}`, photos: photosOf(r) })),
+      ...exps.map((r) => ({ date: r.date, label: `${r.category}${r.description ? ` · ${r.description}` : ""}`, photos: photosOf(r) })),
+    ].flatMap((x) => x.photos.map((p) => ({ date: x.date, label: x.label, photo: p }))))}
     <div class="foot">Stored on device · SVKD COIR</div>
   </body></html>`;
 }
@@ -1722,21 +1841,31 @@ const s = StyleSheet.create({
   photoButtons: { flexDirection: "row", gap: 10, marginTop: 4 },
   photoBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 48, borderRadius: 8, borderWidth: 1, borderColor: C.line, backgroundColor: C.surface, paddingHorizontal: 6 },
   photoBtnText: { color: C.forest, fontSize: 12, fontWeight: "700" },
-  photoPreviewWrap: { marginTop: 4, borderRadius: 10, overflow: "hidden", borderWidth: 1, borderColor: C.line, position: "relative" },
-  photoPreview: { width: "100%", height: 180, backgroundColor: "#EEE8DC" },
-  photoRemove: { position: "absolute", top: 8, right: 8, width: 30, height: 30, borderRadius: 15, backgroundColor: "rgba(31,41,36,0.72)", alignItems: "center", justifyContent: "center" },
-  photoReplace: { position: "absolute", bottom: 8, right: 8, flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "rgba(255,253,248,0.94)", paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
-  photoReplaceText: { color: C.forest, fontSize: 12, fontWeight: "700" },
   photoPermBox: { marginTop: 8, backgroundColor: "#FBECE7", borderRadius: 8, padding: 12, gap: 8 },
   photoPermText: { color: C.expense, fontSize: 12, lineHeight: 17 },
   photoSettingsBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, alignSelf: "flex-start", backgroundColor: C.expense, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8 },
   photoSettingsText: { color: "#fff", fontSize: 12, fontWeight: "800" },
   rowPhotoWrap: { marginTop: 8, width: 52, height: 52, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: C.line, position: "relative" },
   rowPhoto: { width: "100%", height: "100%", backgroundColor: "#EEE8DC" },
-  rowPhotoBadge: { position: "absolute", bottom: 0, right: 0, backgroundColor: "rgba(31,41,36,0.7)", padding: 2, borderTopLeftRadius: 6 },
+  rowPhotoBadge: { position: "absolute", bottom: 0, right: 0, backgroundColor: "rgba(31,41,36,0.7)", paddingHorizontal: 3, paddingVertical: 2, borderTopLeftRadius: 6, flexDirection: "row", alignItems: "center", gap: 2 },
+  rowPhotoCount: { color: "#fff", fontSize: 9, fontWeight: "800" },
+  photoGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8, marginTop: 2 },
+  photoThumbBox: { width: 72, height: 72, borderRadius: 8, overflow: "hidden", borderWidth: 1, borderColor: C.line, position: "relative" },
+  photoThumbImg: { width: "100%", height: "100%", backgroundColor: "#EEE8DC" },
+  photoThumbRemove: { position: "absolute", top: 3, right: 3, width: 22, height: 22, borderRadius: 11, backgroundColor: "rgba(31,41,36,0.72)", alignItems: "center", justifyContent: "center" },
   photoViewerWrap: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)", alignItems: "center", justifyContent: "center" },
+  photoViewerBackdrop: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0 },
   photoViewerImage: { width: "92%", height: "80%" },
   photoViewerClose: { position: "absolute", top: 50, right: 20, width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
+  photoNav: { position: "absolute", top: "48%", width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.18)", alignItems: "center", justifyContent: "center" },
+  photoCounter: { position: "absolute", bottom: 46, alignSelf: "center", backgroundColor: "rgba(255,255,255,0.18)", paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12 },
+  photoCounterText: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  optionAdd: { borderColor: C.action, borderStyle: "dashed", backgroundColor: "#FBF2E4" },
+  newCatRow: { flexDirection: "row", gap: 8, alignItems: "center", marginTop: 8, marginBottom: 4 },
+  newCatSave: { backgroundColor: C.forest, paddingHorizontal: 16, minHeight: 44, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  newCatSaveText: { color: "#fff", fontSize: 13, fontWeight: "800" },
+  catRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: C.line },
+  catName: { fontSize: 15, fontWeight: "600", color: C.ink },
 
   empty: { padding: 25, alignItems: "center" },
   emptyTitle: { color: C.ink, fontWeight: "800", marginTop: 10 },

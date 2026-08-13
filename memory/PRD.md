@@ -47,6 +47,11 @@ Small coir business owner/operator recording daily cash, tracking customer dues,
 - Customer/Supplier PDF statements embed attached receipt photos in a "Receipts" section (also added to legacy customer statements).
 - (Skipped per user: per-supplier same-date trip totals.)
 
+## Implemented (2026-06-13, batch 2)
+- Custom categories: users can add their own income products and expense categories (inline "New" chip in the record form + a "Manage categories" screen in Settings, with delete + confirm). Stored in AsyncStorage key `svkd-coir-categories-v1`. Ledger chips, category breakdown, and category trends all derive from actual data so custom categories appear automatically.
+- Multiple photos per entry: records now store `photos: string[]` (legacy `photo` string still read via `photosOf`). Form shows a thumbnail grid with per-photo remove + "Add more"; ledger row shows first thumbnail with a count badge; tapping opens a full-screen gallery viewer with prev/next paging.
+- Month PDF export now embeds attached receipt photos in a Receipts section (statements already did).
+
 ## Testing
 - testing_agent iterations 3–11: all flows pass, no regressions. Latest: iteration_11 all green.
 

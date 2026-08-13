@@ -1,0 +1,28 @@
+{
+  "summary": "Frontend-only regression for SVKD COIR iteration 13 covering (1) inline custom income category via record-type-add + new-category-input + new-category-save, (2) inline custom expense category via same flow, (3) Manage categories modal from Settings (open-categories-button -> categories-modal) with add/delete + confirm dialog, (4) custom category propagation to income ledger chips and category breakdown card, (5) multi-photo record row (row-photo-thumb with count badge) and photo-viewer with prev/next/close paging using seeded base64 photos, (6) photo form controls (PHOTOS / RECEIPTS section, photo-camera-button, photo-gallery-button labelled 'Choose from gallery'), and (7) Month PDF export from calendar (export-month-button triggers window.print without crash). Regression checks: Pending-first order & default in record form, net-position-card, reminders tabs, delete confirm dialog, and pending-only chips all pass. Zero bugs found.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "View", "issue": "React Native web console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Not a functional bug but should be migrated. Reference: /app/frontend/app/index.tsx (likely inside PhotoViewer / Modal wrappers)."}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_13.json"],
+  "action_items": [
+    "(Optional) Migrate any pointerEvents={...} prop to style={{ pointerEvents: ... }} to silence the React Native Web deprecation warning."
+  ],
+  "critical_code_review_comments": [
+    "index.tsx is now 2057 lines (>>700 threshold). Strongly recommend splitting into modules: RecordForm, Ledger + Breakdown, PhotoAttach/PhotoViewer, CategoriesModal, Calendar, PDF helpers, storage/types.",
+    "photosOf() migration is handled correctly for legacy single-photo records; sanitizers keep both photo and photos in the type, but the write path only writes photos[] which is the right long-term shape.",
+    "CategoriesModal renders both delete buttons with the same testID inside a list (category-delete-income repeats per row); tests must scope by row (category-row-income containing name) — acceptable but flagged for future stable e2e."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100%"},
+  "seed_data_creation": "Seeded via localStorage 'coir-ledger-records-v1' (a) a 3-photo income record dated 2026-01-08 (tiny base64 PNGs) to exercise row-photo-thumb count badge and photo-viewer paging, and (b) an income record with today's date so export-month-button was enabled for the Month PDF test. Also seeded 'svkd-coir-categories-v1' with Coir Rope as an income category to verify ledger chip + breakdown row.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Verified test IDs: record-type-add, new-category-input, new-category-save, record-type-<slug>, open-categories-button, categories-modal, category-input-income, category-input-expense, category-add-income, category-add-expense, category-row-income, category-row-expense, category-delete-income, category-delete-expense, confirm-delete-button, income-chip-<slug>, expense-chip-<slug>, breakdown-row-<slug>, row-photo-thumb, photo-viewer, photo-viewer-next, photo-viewer-prev, photo-viewer-close, photo-camera-button, photo-gallery-button, export-month-button. Notes for playwright on web: (i) record-type-add sits at end of a horizontal chip row and can be reported 'outside viewport' by page.click — use JS scrollIntoView({block:'center', inline:'center'}) + el.click(). (ii) localStorage keys used are 'coir-ledger-records-v1' and 'svkd-coir-categories-v1' ({income:[],expense:[]}). (iii) Storage did NOT persist between separate browser sessions in our automation harness, so seed inside the same script/session. (iv) Month PDF requires at least one record in the currently viewed month; default view is today's month. (v) Stubbing window.print (and window.open in case react-native-web uses print-via-new-window) is enough to verify export without a real print dialog. Photo embedding in PDF was not visually asserted since capture is native-only on the web preview.",
+  "rca_of_issue": "N/A - no bugs found."
+}
