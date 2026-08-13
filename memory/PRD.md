@@ -40,6 +40,13 @@ Small coir business owner/operator recording daily cash, tracking customer dues,
 ## Data Model additions
 - Income/Expense now include optional `photo` (base64 data URI).
 
+## Implemented (2026-06-13)
+- Homepage income FAB relabeled "Bill" (still add-income-button / income form).
+- Payment Status now defaults to Pending and shows Pending before Paid (income & expense forms).
+- Removed "Current bill" and "Diesel" expense categories everywhere (categories now: Salaries, Maintenance, Husk).
+- Customer/Supplier PDF statements embed attached receipt photos in a "Receipts" section (also added to legacy customer statements).
+- (Skipped per user: per-supplier same-date trip totals.)
+
 ## Testing
 - testing_agent iterations 3–11: all flows pass, no regressions. Latest: iteration_11 all green.
 

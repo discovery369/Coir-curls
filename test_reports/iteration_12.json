@@ -1,0 +1,23 @@
+{
+  "summary": "Frontend-only regression for SVKD COIR iteration covering (A) 'Bill' label on add-income-button, (B) Payment Status default=Pending with Pending-before-Paid order in both income and expense forms, (C) removal of Diesel & Current bill expense categories (form + ledger chips), and (D) customer/supplier PDF statement generation. All 4 targeted changes verified PASS. Regression on pending-only chips, reminders modal, net-position card visibility, and delete confirm dialog also passed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_12.json"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "index.tsx is 1600+ lines (>700 threshold). Consider splitting into focused modules (RecordForm, Ledger, Calendar, Modals, pdf helpers) for maintainability.",
+    "receiptsHTML embeds base64 images directly into PDF HTML; for many photos this can bloat memory/print. Acceptable for offline app but worth flagging."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A", "frontend": "100%"},
+  "seed_data_creation": "Created one income (₹100 pending) and one expense (₹50 pending) via UI to verify default-pending badge and PDF vendor/customer statement generation.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration changes fully verified: (A) add-income-button displays 'Bill' text (icon+'Bill'), (B) both record-status-pending/paid and expense-status-pending/paid render Pending first (x=20 vs x=129 in 390px viewport) and Pending is pre-selected (orange bg rgb(199,107,53)); saved records without status change show PENDING badge on income-status-toggle and expense-status-badge. (C) Expense form contains exactly record-type-salaries/-maintenance/-husk with record-type-diesel and record-type-current-bill absent; ledger chips contain expense-chip-all/-salaries/-maintenance/-husk with expense-chip-diesel and expense-chip-current-bill absent. (D) vendor-statement-button and customer-statement-button both trigger print without any red screen/error (window.print stubbed to avoid dialog). Photo embed in PDF (Receipts section) is present in pdfStyle & receiptsHTML() at lines 1592-1637 but not visually asserted (would need photo attachment via native picker, unavailable on web).",
+  "rca_of_issue": "N/A - no bugs found."
+}

@@ -10,7 +10,7 @@ import { Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, SafeA
 
 type Payment = { id: string; date: string; amount: number };
 type Income = { id: string; date: string; product: "Coir Pith" | "Coir Bale"; amount: number; name: string; address: string; phone?: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[]; photo?: string };
-type Expense = { id: string; date: string; category: "Salaries" | "Current bill" | "Maintenance" | "Diesel" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending"; photo?: string };
+type Expense = { id: string; date: string; category: "Salaries" | "Maintenance" | "Husk"; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending"; photo?: string };
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
 type Backup = { id: string; createdAt: string; incomes: Income[]; expenses: Expense[] };
 
@@ -46,7 +46,7 @@ const toNum = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ?
 const toStr = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v));
 const toIso = (v: unknown) => { const d = new Date(toStr(v)); return isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString(); };
 const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const EXPENSE_CATS = ["Salaries", "Current bill", "Maintenance", "Diesel", "Husk"];
+const EXPENSE_CATS = ["Salaries", "Maintenance", "Husk"];
 const sanitizeIncome = (r: Record<string, unknown>): Income => ({
   id: toStr(r.id) || genId(),
   date: toIso(r.date),
@@ -227,7 +227,7 @@ export default function Index() {
 
       {tab !== "settings" && tab !== "calendar" && (
         <View style={s.fabRow}>
-          <ActionButton testID="add-income-button" label="Income" color={C.forest} onPress={() => open("income")} />
+          <ActionButton testID="add-income-button" label="Bill" color={C.forest} onPress={() => open("income")} />
           <ActionButton testID="add-expense-button" label="Expense" color={C.action} onPress={() => open("expense")} />
         </View>
       )}
@@ -489,7 +489,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
   const isIncome = kind === "income";
   const [chip, setChip] = useState("All");
   const [pendingOnly, setPendingOnly] = useState(false);
-  const chips = isIncome ? ["All", "Coir Pith", "Coir Bale"] : ["All", "Salaries", "Current bill", "Maintenance", "Diesel", "Husk"];
+  const chips = isIncome ? ["All", "Coir Pith", "Coir Bale"] : ["All", "Salaries", "Maintenance", "Husk"];
 
   const filtered = rows.filter((row) => {
     if (chip !== "All") { const t = "product" in row ? row.product : row.category; if (t !== chip) return false; }
@@ -543,7 +543,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
         <View style={s.empty}>
           <MaterialCommunityIcons name={hasFilter ? "magnify" : isIncome ? "arrow-down-left" : "arrow-up-right"} size={24} color={hasFilter ? C.muted : isIncome ? C.income : C.expense} />
           <Text style={s.emptyTitle}>{hasFilter ? `No matching ${kind} records` : isIncome ? "No income recorded yet" : "No expenses recorded yet"}</Text>
-          <Text style={s.emptyCopy}>{hasFilter ? "Try a different search or filter." : isIncome ? "Add your first Coir Pith or Coir Bale sale." : "Add salaries, current bill, maintenance or husk."}</Text>
+          <Text style={s.emptyCopy}>{hasFilter ? "Try a different search or filter." : isIncome ? "Add your first Coir Pith or Coir Bale sale." : "Add salaries, maintenance or husk."}</Text>
         </View>
       ) : filtered.map((row) => {
         const due = isIncome ? dueOf(row as Income) : expenseDue(row as Expense);
@@ -586,7 +586,7 @@ function Ledger({ kind, rows, query, dateFrom, dateTo, onAdd, onEdit, onDelete, 
 
 function CategoryBreakdown({ kind, rows }: { kind: "income" | "expense"; rows: (Income | Expense)[] }) {
   const isIncome = kind === "income";
-  const cats = isIncome ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Current bill", "Maintenance", "Diesel", "Husk"];
+  const cats = isIncome ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Maintenance", "Husk"];
   const data = cats.map((cat) => {
     const items = rows.filter((r) => (isIncome ? (r as Income).product : (r as Expense).category) === cat);
     let received = 0, pending = 0;
@@ -634,7 +634,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
   const [name, setName] = useState(record && "name" in record ? record.name : "");
   const [address, setAddress] = useState(record && "address" in record ? record.address : "");
   const [phone, setPhone] = useState(record && "phone" in record && record.phone ? record.phone : "");
-  const [status, setStatus] = useState<"paid" | "pending">(record && "status" in record && record.status ? record.status : "paid");
+  const [status, setStatus] = useState<"paid" | "pending">(record && "status" in record && record.status ? record.status : "pending");
   const [tons, setTons] = useState(record && "tons" in record && record.tons ? String(record.tons) : "");
   const [incomeCost, setIncomeCost] = useState(record && "product" in record && record.costPerTon ? String(record.costPerTon) : "");
   const [costPerTrip, setCostPerTrip] = useState(record && "costPerTon" in record && "category" in record ? String(record.costPerTon || "") : "");
@@ -648,7 +648,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
   const [showDate, setShowDate] = useState(false);
   const [error, setError] = useState("");
   const [photo, setPhoto] = useState(record && "photo" in record && record.photo ? record.photo : "");
-  const options = kind === "income" ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Current bill", "Maintenance", "Diesel", "Husk"];
+  const options = kind === "income" ? ["Coir Pith", "Coir Bale"] : ["Salaries", "Maintenance", "Husk"];
   const isHusk = kind === "expense" && choice === "Husk";
   const tripCount = Math.max(0, Number(trips) || 0);
   const autoKind = kind === "income" || isHusk;
@@ -738,7 +738,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
               <TextInput testID="record-phone-input" value={phone} onChangeText={setPhone} placeholder="e.g. 98765 43210" placeholderTextColor="#9DA49D" keyboardType="phone-pad" style={s.textInputBox} />
               <Text style={s.inputLabel}>PAYMENT STATUS</Text>
               <View style={s.options}>
-                {(["paid", "pending"] as const).map((st) => (
+                {(["pending", "paid"] as const).map((st) => (
                   <Pressable key={st} testID={`record-status-${st}`} onPress={() => setStatus(st)} style={[s.option, status === st && (st === "pending" ? s.optionSelectedWarn : s.optionSelected)]}>
                     <MaterialCommunityIcons name={st === "paid" ? "check-circle-outline" : "clock-outline"} size={16} color={status === st ? "#fff" : C.muted} />
                     <Text style={[s.optionText, status === st && s.optionTextSelected]}>{st === "paid" ? "Paid" : "Pending"}</Text>
@@ -749,7 +749,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
           ) : (
             <>
               <Text style={s.inputLabel}>{choice === "Maintenance" ? "DESCRIPTION" : "NAME"}</Text>
-              <SuggestInput testID="record-description-input" value={description} onChangeText={setDescription} placeholder={choice === "Maintenance" ? "What was repaired?" : choice === "Husk" ? "Supplier / batch name" : choice === "Current bill" ? "Bill name / provider" : choice === "Diesel" ? "Pump / supplier name" : "Employee name"} suggestions={suggestExpenseNames} />
+              <SuggestInput testID="record-description-input" value={description} onChangeText={setDescription} placeholder={choice === "Maintenance" ? "What was repaired?" : choice === "Husk" ? "Supplier / batch name" : "Employee name"} suggestions={suggestExpenseNames} />
               {isHusk && (
                 <>
                   <Text style={s.inputLabel}>NUMBER OF TRIPS</Text>
@@ -763,7 +763,7 @@ function RecordForm({ kind, record, onClose, onSave, suggestNames, suggestAddres
               )}
               <Text style={s.inputLabel}>PAYMENT STATUS</Text>
               <View style={s.options}>
-                {(["paid", "pending"] as const).map((st) => (
+                {(["pending", "paid"] as const).map((st) => (
                   <Pressable key={st} testID={`expense-status-${st}`} onPress={() => setStatus(st)} style={[s.option, status === st && (st === "pending" ? s.optionSelectedWarn : s.optionSelected)]}>
                     <MaterialCommunityIcons name={st === "paid" ? "check-circle-outline" : "clock-outline"} size={16} color={status === st ? "#fff" : C.muted} />
                     <Text style={[s.optionText, status === st && s.optionTextSelected]}>{st === "paid" ? "Paid" : "Pending"}</Text>
@@ -1318,7 +1318,7 @@ function CategoryTrends({ incomes, expenses, year, monthIndex, monthName }: { in
   const prevName = new Intl.DateTimeFormat("en-IN", { month: "short" }).format(prev);
   const inMonth = (dateStr: string, y: number, m: number) => { const d = new Date(dateStr); return d.getFullYear() === y && d.getMonth() === m; };
   const incCats = ["Coir Pith", "Coir Bale"] as const;
-  const expCats = ["Salaries", "Current bill", "Maintenance", "Diesel", "Husk"] as const;
+  const expCats = ["Salaries", "Maintenance", "Husk"] as const;
   const rows = [
     ...incCats.map((cat) => ({
       cat, type: "income" as const,
@@ -1435,7 +1435,7 @@ function LocalBackupsModal({ backups, onCreate, onRestore, onDelete, requestConf
   );
 }
 
-type EntityTxn = { id: string; date: string; amount: number; label: string; due: number };
+type EntityTxn = { id: string; date: string; amount: number; label: string; due: number; photo?: string };
 type Entity = { name: string; phone: string; total: number; pending: number; txns: EntityTxn[] };
 function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expenses: Expense[]; onClose: () => void }) {
   const [mode, setMode] = useState<"customers" | "suppliers">("customers");
@@ -1452,8 +1452,8 @@ function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expen
       map.set(key, cur);
       return cur;
     };
-    if (isCustomer) incomes.forEach((r) => { const cur = ensure(r.name, r.phone); const due = dueOf(r); cur.total += r.amount; cur.pending += due; cur.txns.push({ id: r.id, date: r.date, amount: r.amount, label: describeRow(r), due }); });
-    else expenses.forEach((r) => { const cur = ensure(r.description); const amt = expenseTotal(r); const due = expenseDue(r); cur.total += amt; cur.pending += due; cur.txns.push({ id: r.id, date: r.date, amount: amt, label: describeRow(r), due }); });
+    if (isCustomer) incomes.forEach((r) => { const cur = ensure(r.name, r.phone); const due = dueOf(r); cur.total += r.amount; cur.pending += due; cur.txns.push({ id: r.id, date: r.date, amount: r.amount, label: describeRow(r), due, photo: r.photo }); });
+    else expenses.forEach((r) => { const cur = ensure(r.description); const amt = expenseTotal(r); const due = expenseDue(r); cur.total += amt; cur.pending += due; cur.txns.push({ id: r.id, date: r.date, amount: amt, label: describeRow(r), due, photo: r.photo }); });
     return map;
   };
   const isCustomer = mode === "customers";
@@ -1562,7 +1562,7 @@ function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expen
 }
 
 const escapeHtml = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
-const pdfStyle = `* { box-sizing: border-box; } body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1F2924; padding: 28px; } h1 { font-size: 22px; margin: 0; } .sub { color: #59635C; font-size: 12px; margin: 4px 0 20px; } .cards { display: flex; gap: 12px; margin-bottom: 22px; } .card { flex: 1; border: 1px solid #D8D1C4; border-radius: 8px; padding: 12px 14px; } .card .k { font-size: 10px; letter-spacing: 1px; color: #59635C; text-transform: uppercase; } .card .v { font-size: 18px; font-weight: 700; margin-top: 6px; } .inc { color: #2F7D57; } .exp { color: #B65A43; } h2 { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #C76B35; margin: 22px 0 8px; } table { width: 100%; border-collapse: collapse; font-size: 12px; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #E6DFD2; } th { background: #F0E9DC; font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: #59635C; } td.amt, th.amt { text-align: right; font-variant-numeric: tabular-nums; } td.empty { text-align: center; color: #9DA49D; font-style: italic; } tfoot td { font-weight: 700; border-top: 2px solid #1F2924; } .foot { margin-top: 26px; font-size: 10px; color: #9DA49D; }`;
+const pdfStyle = `* { box-sizing: border-box; } body { font-family: -apple-system, Helvetica, Arial, sans-serif; color: #1F2924; padding: 28px; } h1 { font-size: 22px; margin: 0; } .sub { color: #59635C; font-size: 12px; margin: 4px 0 20px; } .cards { display: flex; gap: 12px; margin-bottom: 22px; } .card { flex: 1; border: 1px solid #D8D1C4; border-radius: 8px; padding: 12px 14px; } .card .k { font-size: 10px; letter-spacing: 1px; color: #59635C; text-transform: uppercase; } .card .v { font-size: 18px; font-weight: 700; margin-top: 6px; } .inc { color: #2F7D57; } .exp { color: #B65A43; } h2 { font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: #C76B35; margin: 22px 0 8px; } table { width: 100%; border-collapse: collapse; font-size: 12px; } th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #E6DFD2; } th { background: #F0E9DC; font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase; color: #59635C; } td.amt, th.amt { text-align: right; font-variant-numeric: tabular-nums; } td.empty { text-align: center; color: #9DA49D; font-style: italic; } tfoot td { font-weight: 700; border-top: 2px solid #1F2924; } .foot { margin-top: 26px; font-size: 10px; color: #9DA49D; } .receipts { margin-top: 8px; } .receipt { margin-bottom: 16px; page-break-inside: avoid; } .receipt .rcap { font-size: 11px; color: #59635C; margin-bottom: 6px; } .receipt img { max-width: 100%; max-height: 340px; border: 1px solid #D8D1C4; border-radius: 6px; }`;
 
 function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totIn: number, totEx: number) {
   const incRows = incs.length
@@ -1589,9 +1589,16 @@ function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totI
   </body></html>`;
 }
 
+function receiptsHTML(items: { date: string; label: string; photo?: string }[]) {
+  const withPhoto = items.filter((i) => i.photo);
+  if (withPhoto.length === 0) return "";
+  return `<h2>Receipts</h2><div class="receipts">${withPhoto.map((i) => `<div class="receipt"><div class="rcap">${escapeHtml(displayDate(i.date))} · ${escapeHtml(i.label)}</div><img src="${i.photo}" /></div>`).join("")}</div>`;
+}
+
 function buildCustomerHTML(name: string, records: Income[], total: number, pending: number) {
   const sorted = [...records].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const rows = sorted.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.product)}</td><td>${r.tons ? escapeHtml(`${r.tons}t @ ₹${r.costPerTon}/t`) : "—"}</td><td>${dueOf(r) > 0 ? `Due ${escapeHtml(money(dueOf(r)))}` : "Paid"}</td><td class="amt">${escapeHtml(money(r.amount))}</td></tr>`).join("");
+  const receipts = receiptsHTML(sorted.map((r) => ({ date: r.date, label: `${r.product}${r.name ? ` · ${r.name}` : ""}`, photo: r.photo })));
   return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
     <h1>Statement · ${escapeHtml(name)}</h1>
     <div class="sub">SVKD COIR · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
@@ -1604,6 +1611,7 @@ function buildCustomerHTML(name: string, records: Income[], total: number, pendi
     <table><thead><tr><th>Date</th><th>Product</th><th>Qty / Rate</th><th>Status</th><th class="amt">Amount</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="5" class="empty">No purchases</td></tr>`}</tbody>
     <tfoot><tr><td colspan="4">Outstanding due</td><td class="amt">${escapeHtml(money(pending))}</td></tr></tfoot></table>
+    ${receipts}
     <div class="foot">Thank you for your business · SVKD COIR</div>
   </body></html>`;
 }
@@ -1611,6 +1619,7 @@ function buildCustomerHTML(name: string, records: Income[], total: number, pendi
 function buildEntityHTML(name: string, isCustomer: boolean, txns: EntityTxn[], total: number, pending: number) {
   const sorted = [...txns].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const rows = sorted.map((t) => `<tr><td>${displayDate(t.date)}</td><td>${escapeHtml(t.label)}</td><td>${t.due > 0.009 ? `Due ${escapeHtml(money(t.due))}` : "Paid"}</td><td class="amt">${escapeHtml(money(t.amount))}</td></tr>`).join("");
+  const receipts = receiptsHTML(sorted.map((t) => ({ date: t.date, label: t.label, photo: t.photo })));
   const totalLabel = isCustomer ? "Total Purchased" : "Total Billed";
   const dueLabel = isCustomer ? "Outstanding Due" : "Balance to Pay";
   return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
@@ -1625,6 +1634,7 @@ function buildEntityHTML(name: string, isCustomer: boolean, txns: EntityTxn[], t
     <table><thead><tr><th>Date</th><th>Details</th><th>Status</th><th class="amt">Amount</th></tr></thead>
     <tbody>${rows || `<tr><td colspan="4" class="empty">No transactions</td></tr>`}</tbody>
     <tfoot><tr><td colspan="3">${dueLabel}</td><td class="amt">${escapeHtml(money(pending))}</td></tr></tfoot></table>
+    ${receipts}
     <div class="foot">${isCustomer ? "Thank you for your business" : "Statement for your records"} · SVKD COIR</div>
   </body></html>`;
 }
