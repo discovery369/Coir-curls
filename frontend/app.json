@@ -23,7 +23,9 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.emergent.profitcalculator.wx9pdf",
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -51,7 +53,8 @@
       "@react-native-community/datetimepicker"
     ],
     "experiments": {
-      "typedRoutes": true
+      "typedRoutes": true,
+      "baseUrl": "/Coir-curls"
     }
   }
 }

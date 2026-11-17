@@ -7,20 +7,27 @@ import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 import { useEffect, useMemo, useState } from "react";
 import { Image, KeyboardAvoidingView, Linking, Modal, Platform, Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import DraggableFlatList, { RenderItemParams } from "react-native-draggable-flatlist";
 
 type Payment = { id: string; date: string; amount: number };
 type Income = { id: string; date: string; product: string; amount: number; name: string; address: string; phone?: string; status?: "paid" | "pending"; tons?: number; costPerTon?: number; payments?: Payment[]; photo?: string; photos?: string[] };
-type Expense = { id: string; date: string; category: string; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending"; photo?: string; photos?: string[] };
+type Expense = { id: string; date: string; category: string; amount: number; repairAmount: number; description: string; costPerTon: number; totalWeight: number; loads?: number; loadWeight?: number; coirOutput?: number; pithOutput?: number; trips?: number; status?: "paid" | "pending"; phone?: string; photo?: string; photos?: string[] };
 type Tab = "overview" | "income" | "expenses" | "calendar" | "settings";
 type Backup = { id: string; createdAt: string; incomes: Income[]; expenses: Expense[] };
-type Categories = { income: string[]; expense: string[] };
+type Categories = { income: string[]; expense: string[]; colors: Record<string, string> };
+type Profile = { company: string; user: string };
 
 const C = { canvas: "#F5F0E7", surface: "#FFFDF8", ink: "#1F2924", muted: "#59635C", line: "#D8D1C4", forest: "#173C2C", income: "#2F7D57", expense: "#B65A43", action: "#C76B35", highlight: "#E8D5A7", nav: "#203029", blue: "#2F6FB0" };
 const STORAGE_KEY = "coir-ledger-records-v1";
 const BACKUPS_KEY = "svkd-coir-backups-v1";
 const CATS_KEY = "svkd-coir-categories-v1";
+const PROFILE_KEY = "svkd-coir-profile-v1";
+const CAT_PALETTE = ["#2F7D57", "#B65A43", "#C76B35", "#2F6FB0", "#7A5AA8", "#0E7C86", "#B4406B", "#5B7A2F", "#A67C00", "#4A5568"];
 const DEFAULT_INCOME_CATS = ["Coir Pith", "Coir Bale"];
 const DEFAULT_EXPENSE_CATS = ["Salaries", "Maintenance", "Husk"];
+const DEFAULT_PROFILE: Profile = { company: "SVKD COIR", user: "operator" };
+let BRAND = DEFAULT_PROFILE.company;
+const colorFor = (name: string, colors: Record<string, string>) => colors[name] || CAT_PALETTE[Math.abs(Array.from(name).reduce((a, c) => a + c.charCodeAt(0), 0)) % CAT_PALETTE.length];
 const TONS_PER_TRIP = 4; // each husk load ~4 tons -> 1 ton coir + 3 ton pith
 const WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -34,9 +41,9 @@ const openWhatsApp = async (message: string, phone?: string) => {
   const primary = num ? `https://wa.me/${num}?text=${text}` : (Platform.OS === "web" ? `https://wa.me/?text=${text}` : `whatsapp://send?text=${text}`);
   try { await Linking.openURL(primary); } catch { try { await Linking.openURL(`https://wa.me/?text=${text}`); } catch { /* whatsapp unavailable */ } }
 };
-const waStatement = (name: string, total: number, paid: number, due: number) => `Hello ${name || "there"},\n\nStatement from SVKD COIR:\nTotal purchased: ${money(total)}\nPaid: ${money(paid)}\nBalance due: ${money(due)}\n\nThank you for your business.`;
-const waReminder = (name: string, due: number, days: number) => `Hello ${name || "there"},\n\nGentle reminder from SVKD COIR: ${money(due)} is pending${days ? ` (${days} days)` : ""}. Kindly arrange payment at your convenience.\n\nThank you.`;
-const waSupplier = (name: string, total: number, due: number) => `Hello ${name || "there"},\n\nSupplier statement from SVKD COIR:\nTotal billed: ${money(total)}\nBalance to pay: ${money(due)}\n\nThank you.`;
+const waStatement = (name: string, total: number, paid: number, due: number) => `Hello ${name || "there"},\n\nStatement from ${BRAND}:\nTotal purchased: ${money(total)}\nPaid: ${money(paid)}\nBalance due: ${money(due)}\n\nThank you for your business.`;
+const waReminder = (name: string, due: number, days: number) => `Hello ${name || "there"},\n\nGentle reminder from ${BRAND}: ${money(due)} is pending${days ? ` (${days} days)` : ""}. Kindly arrange payment at your convenience.\n\nThank you.`;
+const waSupplier = (name: string, total: number, due: number) => `Hello ${name || "there"},\n\nSupplier statement from ${BRAND}:\nTotal billed: ${money(total)}\nBalance to pay: ${money(due)}\n\nThank you.`;
 const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const endOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 const paidSum = (r: Income) => (r.payments || []).reduce((sum, p) => sum + p.amount, 0);
@@ -81,6 +88,7 @@ const sanitizeExpense = (r: Record<string, unknown>): Expense => ({
   pithOutput: toNum(r.pithOutput),
   trips: toNum(r.trips),
   status: r.status === "pending" ? "pending" : "paid",
+  phone: toStr(r.phone),
   photos: toStrArr(r.photos).length ? toStrArr(r.photos) : (toStr(r.photo) ? [toStr(r.photo)] : []),
 });
 
@@ -104,8 +112,11 @@ export default function Index() {
   const [showVendors, setShowVendors] = useState(false);
   const [viewingPhotos, setViewingPhotos] = useState<{ list: string[]; index: number } | null>(null);
   const [showCategories, setShowCategories] = useState(false);
-  const [categories, setCategories] = useState<Categories>({ income: DEFAULT_INCOME_CATS, expense: DEFAULT_EXPENSE_CATS });
+  const [categories, setCategories] = useState<Categories>({ income: DEFAULT_INCOME_CATS, expense: DEFAULT_EXPENSE_CATS, colors: {} });
   const [catsReady, setCatsReady] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [profile, setProfile] = useState<Profile>(DEFAULT_PROFILE);
+  const [profileReady, setProfileReady] = useState(false);
   const nameOptions = useMemo(() => Array.from(new Set(incomes.map((i) => i.name).filter(Boolean))), [incomes]);
   const addressOptions = useMemo(() => Array.from(new Set(incomes.map((i) => i.address).filter(Boolean))), [incomes]);
   const expenseNameOptions = useMemo(() => Array.from(new Set(expenses.map((e) => e.description).filter(Boolean))), [expenses]);
@@ -124,17 +135,33 @@ export default function Index() {
 
   useEffect(() => {
     AsyncStorage.getItem(CATS_KEY).then((raw) => {
-      if (raw) { const c = JSON.parse(raw); setCategories({ income: Array.isArray(c.income) && c.income.length ? c.income : DEFAULT_INCOME_CATS, expense: Array.isArray(c.expense) && c.expense.length ? c.expense : DEFAULT_EXPENSE_CATS }); }
+      if (raw) { const c = JSON.parse(raw); setCategories({ income: Array.isArray(c.income) && c.income.length ? c.income : DEFAULT_INCOME_CATS, expense: Array.isArray(c.expense) && c.expense.length ? c.expense : DEFAULT_EXPENSE_CATS, colors: c.colors && typeof c.colors === "object" ? c.colors : {} }); }
       setCatsReady(true);
     });
   }, []);
   useEffect(() => { if (catsReady) AsyncStorage.setItem(CATS_KEY, JSON.stringify(categories)); }, [categories, catsReady]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(PROFILE_KEY).then((raw) => {
+      if (raw) { const p = JSON.parse(raw); setProfile({ company: (p.company || DEFAULT_PROFILE.company).trim() || DEFAULT_PROFILE.company, user: (p.user || DEFAULT_PROFILE.user).trim() || DEFAULT_PROFILE.user }); }
+      setProfileReady(true);
+    });
+  }, []);
+  useEffect(() => { if (profileReady) AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }, [profile, profileReady]);
+
   const addCategory = (kind: "income" | "expense", name: string) => {
     const clean = name.trim();
     if (!clean) return;
-    setCategories((prev) => prev[kind].some((c) => c.toLowerCase() === clean.toLowerCase()) ? prev : { ...prev, [kind]: [...prev[kind], clean] });
+    setCategories((prev) => {
+      if (prev[kind].some((c) => c.toLowerCase() === clean.toLowerCase())) return prev;
+      const used = Object.values(prev.colors);
+      const nextColor = CAT_PALETTE.find((p) => !used.includes(p)) || CAT_PALETTE[(prev.income.length + prev.expense.length) % CAT_PALETTE.length];
+      return { ...prev, [kind]: [...prev[kind], clean], colors: { ...prev.colors, [clean]: prev.colors[clean] || nextColor } };
+    });
   };
   const deleteCategory = (kind: "income" | "expense", name: string) => setCategories((prev) => ({ ...prev, [kind]: prev[kind].filter((c) => c !== name) }));
+  const reorderCategories = (kind: "income" | "expense", next: string[]) => setCategories((prev) => ({ ...prev, [kind]: next }));
+  const setCategoryColor = (name: string, color: string) => setCategories((prev) => ({ ...prev, colors: { ...prev.colors, [name]: color } }));
 
   const totalIncome = useMemo(() => incomes.reduce((sum, row) => sum + row.amount, 0), [incomes]);
   const totalExpenses = useMemo(() => expenses.reduce((sum, row) => sum + row.amount + (row.repairAmount || 0), 0), [expenses]);
@@ -161,15 +188,19 @@ export default function Index() {
   const open = (kind: "income" | "expense", id?: string) => setEditing({ kind, id });
   const payingRecord = incomes.find((row) => row.id === paying) || null;
   const title = tab === "settings" ? "Settings" : tab === "calendar" ? "Calendar" : tab === "income" ? "Income" : tab === "expenses" ? "Expenses" : "Overview";
+  BRAND = profile.company;
+  const greetName = profile.user ? profile.user.charAt(0).toUpperCase() + profile.user.slice(1) : "there";
 
   return (
     <SafeAreaView style={s.safe}>
       <View style={s.header}>
-        <View>
-          <Text style={s.brand}>SVKD COIR</Text>
+        <Pressable testID="open-profile-button" onPress={() => setShowProfile(true)}>
+          <Text style={s.brand}>{profile.company}</Text>
           <View style={s.localRow}><View style={s.dot} /><Text style={s.local}>Stored on this device</Text></View>
-        </View>
-        <MaterialCommunityIcons name="dots-horizontal" size={24} color={C.muted} />
+        </Pressable>
+        <Pressable testID="header-profile-icon" hitSlop={8} onPress={() => setShowProfile(true)}>
+          <MaterialCommunityIcons name="account-circle-outline" size={26} color={C.muted} />
+        </Pressable>
       </View>
 
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
@@ -182,15 +213,16 @@ export default function Index() {
             onOpenBackups={() => setShowBackups(true)}
             onOpenVendors={() => setShowVendors(true)}
             onOpenCategories={() => setShowCategories(true)}
+            onOpenProfile={() => setShowProfile(true)}
             onRestore={(inc, exp) => { setIncomes(inc); setExpenses(exp); }}
             requestConfirm={setConfirm}
             onClear={() => setConfirm({ title: "Clear all records?", message: "This cannot be undone.", confirmLabel: "Clear all", onConfirm: () => { setIncomes([]); setExpenses([]); } })}
           />
         ) : tab === "calendar" ? (
-          <CalendarView incomes={incomes} expenses={expenses} />
+          <CalendarView incomes={incomes} expenses={expenses} colors={categories.colors} />
         ) : (
           <>
-            <Text style={s.greeting}>Good day, operator.</Text>
+            <Text style={s.greeting}>Good day, {greetName}.</Text>
             <Text style={s.dateContext}>{new Intl.DateTimeFormat("en-IN", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</Text>
             <View style={s.summary}>
               <View style={s.netPanel}>
@@ -242,8 +274,8 @@ export default function Index() {
 
             <Filters query={query} setQuery={setQuery} dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} />
 
-            {(tab === "overview" || tab === "income") && <Ledger kind="income" rows={incomes} categories={categories.income} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("income")} onEdit={(id) => open("income", id)} onDelete={remove} onOpenPayment={(id) => setPaying(id)} onViewPhotos={(list, index) => setViewingPhotos({ list, index })} />}
-            {(tab === "overview" || tab === "expenses") && <Ledger kind="expense" rows={expenses} categories={categories.expense} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("expense")} onEdit={(id) => open("expense", id)} onDelete={remove} onViewPhotos={(list, index) => setViewingPhotos({ list, index })} />}
+            {(tab === "overview" || tab === "income") && <Ledger kind="income" rows={incomes} categories={categories.income} colors={categories.colors} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("income")} onEdit={(id) => open("income", id)} onDelete={remove} onOpenPayment={(id) => setPaying(id)} onViewPhotos={(list, index) => setViewingPhotos({ list, index })} />}
+            {(tab === "overview" || tab === "expenses") && <Ledger kind="expense" rows={expenses} categories={categories.expense} colors={categories.colors} query={query} dateFrom={dateFrom} dateTo={dateTo} onAdd={() => open("expense")} onEdit={(id) => open("expense", id)} onDelete={remove} onViewPhotos={(list, index) => setViewingPhotos({ list, index })} />}
           </>
         )}
       </ScrollView>
@@ -292,7 +324,8 @@ export default function Index() {
       {showBackups && <LocalBackupsModal backups={backups} onCreate={createBackup} onRestore={restoreBackup} onDelete={deleteBackup} requestConfirm={setConfirm} onClose={() => setShowBackups(false)} />}
       {showVendors && <VendorsModal incomes={incomes} expenses={expenses} onClose={() => setShowVendors(false)} />}
       {viewingPhotos && <PhotoViewerModal list={viewingPhotos.list} index={viewingPhotos.index} onClose={() => setViewingPhotos(null)} />}
-      {showCategories && <CategoriesModal categories={categories} onAdd={addCategory} onDelete={deleteCategory} requestConfirm={setConfirm} onClose={() => setShowCategories(false)} />}
+      {showCategories && <CategoriesModal categories={categories} onAdd={addCategory} onDelete={deleteCategory} onReorder={reorderCategories} onSetColor={setCategoryColor} requestConfirm={setConfirm} onClose={() => setShowCategories(false)} />}
+      {showProfile && <ProfileModal profile={profile} onSave={(p) => { setProfile(p); setShowProfile(false); }} onClose={() => setShowProfile(false)} />}
       {showCustomers && <CustomersModal incomes={incomes} onClose={() => setShowCustomers(false)} />}
       {payingRecord && <PaymentModal record={payingRecord} onChange={updateIncome} onClose={() => setPaying(null)} />}
 
@@ -530,7 +563,7 @@ function Filters({ query, setQuery, dateFrom, dateTo, setDateFrom, setDateTo }: 
   );
 }
 
-function Ledger({ kind, rows, categories, query, dateFrom, dateTo, onAdd, onEdit, onDelete, onOpenPayment, onViewPhotos }: { kind: "income" | "expense"; rows: (Income | Expense)[]; categories: string[]; query: string; dateFrom: Date | null; dateTo: Date | null; onAdd: () => void; onEdit: (id: string) => void; onDelete: (kind: "income" | "expense", id: string) => void; onOpenPayment?: (id: string) => void; onViewPhotos?: (list: string[], index: number) => void }) {
+function Ledger({ kind, rows, categories, colors, query, dateFrom, dateTo, onAdd, onEdit, onDelete, onOpenPayment, onViewPhotos }: { kind: "income" | "expense"; rows: (Income | Expense)[]; categories: string[]; colors: Record<string, string>; query: string; dateFrom: Date | null; dateTo: Date | null; onAdd: () => void; onEdit: (id: string) => void; onDelete: (kind: "income" | "expense", id: string) => void; onOpenPayment?: (id: string) => void; onViewPhotos?: (list: string[], index: number) => void }) {
   const isIncome = kind === "income";
   const [chip, setChip] = useState("All");
   const [pendingOnly, setPendingOnly] = useState(false);
@@ -568,6 +601,7 @@ function Ledger({ kind, rows, categories, query, dateFrom, dateTo, onAdd, onEdit
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.filterRow} contentContainerStyle={s.filterRowContent}>
         {chips.map((c) => (
           <Pressable key={c} testID={`${kind}-chip-${c.replace(/\s+/g, "-").toLowerCase()}`} onPress={() => setChip(c)} style={[s.chip, chip === c && s.chipSelected]}>
+            {c !== "All" ? <View style={[s.chipDot, { backgroundColor: colorFor(c, colors) }]} /> : null}
             <Text style={[s.chipText, chip === c && s.chipTextSelected]}>{c}</Text>
           </Pressable>
         ))}
@@ -577,7 +611,7 @@ function Ledger({ kind, rows, categories, query, dateFrom, dateTo, onAdd, onEdit
         </Pressable>
       </ScrollView>
 
-      <CategoryBreakdown kind={kind} rows={filtered} />
+      <CategoryBreakdown kind={kind} rows={filtered} colors={colors} />
 
       <View style={s.tableHeader}>
         <Text style={[s.cell, s.dateCell]}>DATE</Text>
@@ -634,7 +668,7 @@ function Ledger({ kind, rows, categories, query, dateFrom, dateTo, onAdd, onEdit
   );
 }
 
-function CategoryBreakdown({ kind, rows }: { kind: "income" | "expense"; rows: (Income | Expense)[] }) {
+function CategoryBreakdown({ kind, rows, colors }: { kind: "income" | "expense"; rows: (Income | Expense)[]; colors: Record<string, string> }) {
   const isIncome = kind === "income";
   const cats = Array.from(new Set(rows.map((r) => (isIncome ? (r as Income).product : (r as Expense).category)).filter(Boolean)));
   const data = cats.map((cat) => {
@@ -660,7 +694,10 @@ function CategoryBreakdown({ kind, rows }: { kind: "income" | "expense"; rows: (
       {data.map((d) => (
         <View key={d.cat} testID={`breakdown-row-${d.cat.replace(/\s+/g, "-").toLowerCase()}`} style={s.breakdownRow}>
           <View style={s.breakdownCatCol}>
-            <Text style={s.breakdownCat} numberOfLines={1}>{d.cat}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <View style={[s.chipDot, { backgroundColor: colorFor(d.cat, colors) }]} />
+              <Text style={s.breakdownCat} numberOfLines={1}>{d.cat}</Text>
+            </View>
             <Text style={s.breakdownCount}>{d.count} · {money(d.total)}</Text>
           </View>
           <Text style={s.breakdownReceived} testID={`breakdown-received-${d.cat.replace(/\s+/g, "-").toLowerCase()}`}>{money(d.received)}</Text>
@@ -877,7 +914,7 @@ function RecordForm({ kind, record, categories, onAddCategory, onClose, onSave, 
   );
 }
 
-function CalendarView({ incomes, expenses }: { incomes: Income[]; expenses: Expense[] }) {
+function CalendarView({ incomes, expenses, colors }: { incomes: Income[]; expenses: Expense[]; colors: Record<string, string> }) {
   const [mode, setMode] = useState<"month" | "year">("month");
   const [month, setMonth] = useState(new Date());
   const [yearRef, setYearRef] = useState(new Date().getFullYear());
@@ -938,7 +975,7 @@ function CalendarView({ incomes, expenses }: { incomes: Income[]; expenses: Expe
 
           <ProductInsights incomes={monthIncomes} scope="This month" />
 
-          <CategoryTrends incomes={incomes} expenses={expenses} year={year} monthIndex={monthIndex} monthName={monthName} />
+          <CategoryTrends incomes={incomes} expenses={expenses} year={year} monthIndex={monthIndex} monthName={monthName} colors={colors} />
 
           <Pressable testID="export-month-button" onPress={exportPdf} disabled={exporting || rows.length === 0} style={[s.exportButton, (exporting || rows.length === 0) && s.exportDisabled]}>
             <MaterialCommunityIcons name="file-pdf-box" size={19} color="#fff" />
@@ -1238,7 +1275,7 @@ function CustomersModal({ incomes, onClose }: { incomes: Income[]; onClose: () =
   );
 }
 
-function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, onOpenVendors, onOpenCategories, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onOpenBackups: () => void; onOpenVendors: () => void; onOpenCategories: () => void; onRestore: (inc: Income[], exp: Expense[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
+function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, onOpenVendors, onOpenCategories, onOpenProfile, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onOpenBackups: () => void; onOpenVendors: () => void; onOpenCategories: () => void; onOpenProfile: () => void; onRestore: (inc: Income[], exp: Expense[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
   const [notice, setNotice] = useState("");
 
   const doRestore = async () => {
@@ -1262,6 +1299,11 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, 
 
   return (
     <View style={s.settings}>
+      <Pressable testID="open-profile-row" style={s.settingRow} onPress={onOpenProfile}>
+        <MaterialCommunityIcons name="store-outline" size={22} color={C.forest} />
+        <View style={s.settingCopy}><Text style={s.settingTitle}>Business profile</Text><Text style={s.settingSub}>Edit your company name &amp; your name.</Text></View>
+        <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
+      </Pressable>
       <Pressable testID="open-customers-button" style={s.settingRow} onPress={onOpenCustomers}>
         <MaterialCommunityIcons name="account-group-outline" size={22} color={C.forest} />
         <View style={s.settingCopy}><Text style={s.settingTitle}>Customer statements</Text><Text style={s.settingSub}>See orders and dues per customer, and send a PDF statement.</Text></View>
@@ -1382,7 +1424,7 @@ function PaymentModal({ record, onChange, onClose }: { record: Income; onChange:
   );
 }
 
-function CategoryTrends({ incomes, expenses, year, monthIndex, monthName }: { incomes: Income[]; expenses: Expense[]; year: number; monthIndex: number; monthName: string }) {
+function CategoryTrends({ incomes, expenses, year, monthIndex, monthName, colors }: { incomes: Income[]; expenses: Expense[]; year: number; monthIndex: number; monthName: string; colors: Record<string, string> }) {
   const prev = new Date(year, monthIndex - 1, 1);
   const prevName = new Intl.DateTimeFormat("en-IN", { month: "short" }).format(prev);
   const inMonth = (dateStr: string, y: number, m: number) => { const d = new Date(dateStr); return d.getFullYear() === y && d.getMonth() === m; };
@@ -1418,9 +1460,12 @@ function CategoryTrends({ incomes, expenses, year, monthIndex, monthName }: { in
         const color = r.type === "income" ? (up ? C.income : down ? C.expense : C.muted) : (up ? C.expense : down ? C.income : C.muted);
         return (
           <View key={`${r.type}-${r.cat}`} testID={`trend-row-${r.cat.replace(/\s+/g, "-").toLowerCase()}`} style={s.trendRow}>
-            <View style={{ flex: 1 }}>
-              <Text style={s.trendCat} numberOfLines={1}>{r.cat}<Text style={s.trendType}>  {r.type === "income" ? "in" : "out"}</Text></Text>
-              <Text style={s.trendMeta}>{money(r.prv)} → {money(r.cur)}</Text>
+            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <View style={[s.chipDot, { backgroundColor: colorFor(r.cat, colors) }]} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.trendCat} numberOfLines={1}>{r.cat}<Text style={s.trendType}>  {r.type === "income" ? "in" : "out"}</Text></Text>
+                <Text style={s.trendMeta}>{money(r.prv)} → {money(r.cur)}</Text>
+              </View>
             </View>
             <View style={s.trendDeltaWrap}>
               <MaterialCommunityIcons name={up ? "trending-up" : down ? "trending-down" : "trending-neutral"} size={16} color={color} />
@@ -1630,28 +1675,36 @@ function VendorsModal({ incomes, expenses, onClose }: { incomes: Income[]; expen
   );
 }
 
-function CategoriesModal({ categories, onAdd, onDelete, requestConfirm, onClose }: { categories: Categories; onAdd: (kind: "income" | "expense", name: string) => void; onDelete: (kind: "income" | "expense", name: string) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void; onClose: () => void }) {
-  const [incNew, setIncNew] = useState("");
-  const [expNew, setExpNew] = useState("");
-  const section = (kind: "income" | "expense", list: string[], val: string, setVal: (v: string) => void) => (
-    <View style={{ marginBottom: 8 }}>
-      <Text style={s.detailSectionLabel}>{kind === "income" ? "INCOME PRODUCTS" : "EXPENSE CATEGORIES"}</Text>
-      {list.map((c) => (
-        <View key={c} testID={`category-row-${kind}`} style={s.catRow}>
-          <Text style={s.catName}>{c}</Text>
-          <Pressable testID={`category-delete-${kind}`} hitSlop={8} onPress={() => requestConfirm({ title: `Remove "${c}"?`, message: "It won't appear when adding new entries. Existing records keep this label.", confirmLabel: "Remove", onConfirm: () => onDelete(kind, c) })}>
-            <MaterialCommunityIcons name="trash-can-outline" size={19} color={C.expense} />
-          </Pressable>
-        </View>
-      ))}
-      <View style={s.newCatRow}>
-        <TextInput testID={`category-input-${kind}`} value={val} onChangeText={setVal} placeholder={kind === "income" ? "Add product (e.g. Coir Rope)" : "Add category (e.g. Rent)"} placeholderTextColor="#9DA49D" style={[s.textInputBox, { flex: 1 }]} returnKeyType="done" onSubmitEditing={() => { if (val.trim()) { onAdd(kind, val); setVal(""); } }} />
-        <Pressable testID={`category-add-${kind}`} onPress={() => { if (val.trim()) { onAdd(kind, val); setVal(""); } }} style={s.newCatSave}>
-          <Text style={s.newCatSaveText}>Add</Text>
+function CategoriesModal({ categories, onAdd, onDelete, onReorder, onSetColor, requestConfirm, onClose }: { categories: Categories; onAdd: (kind: "income" | "expense", name: string) => void; onDelete: (kind: "income" | "expense", name: string) => void; onReorder: (kind: "income" | "expense", next: string[]) => void; onSetColor: (name: string, color: string) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void; onClose: () => void }) {
+  const [mode, setMode] = useState<"income" | "expense">("income");
+  const [newVal, setNewVal] = useState("");
+  const [colorOpen, setColorOpen] = useState<string | null>(null);
+  const list = mode === "income" ? categories.income : categories.expense;
+
+  const renderItem = ({ item, drag, isActive }: RenderItemParams<string>) => (
+    <View testID={`category-row-${mode}`} style={[s.catRow, isActive && s.catRowActive]}>
+      <View style={s.catRowTop}>
+        <Pressable testID={`category-drag-${mode}`} onLongPress={drag} delayLongPress={120} hitSlop={8} style={{ paddingRight: 6 }}>
+          <MaterialCommunityIcons name="drag-vertical" size={22} color={C.muted} />
+        </Pressable>
+        <Pressable testID={`category-color-${mode}`} onPress={() => setColorOpen((v) => (v === item ? null : item))} style={[s.catSwatch, { backgroundColor: colorFor(item, categories.colors) }]} />
+        <Text style={[s.catName, { flex: 1 }]} numberOfLines={1}>{item}</Text>
+        <Pressable testID={`category-delete-${mode}`} hitSlop={8} onPress={() => requestConfirm({ title: `Remove "${item}"?`, message: "It won't appear when adding new entries. Existing records keep this label.", confirmLabel: "Remove", onConfirm: () => onDelete(mode, item) })}>
+          <MaterialCommunityIcons name="trash-can-outline" size={19} color={C.expense} />
         </Pressable>
       </View>
+      {colorOpen === item && (
+        <View testID={`category-palette-${mode}`} style={s.catPaletteRow}>
+          {CAT_PALETTE.map((col) => (
+            <Pressable key={col} testID={`palette-${col}`} onPress={() => { onSetColor(item, col); setColorOpen(null); }} style={[s.catPaletteDot, { backgroundColor: col }, colorFor(item, categories.colors) === col && s.catPaletteDotSel]} />
+          ))}
+        </View>
+      )}
     </View>
   );
+
+  const add = () => { if (newVal.trim()) { onAdd(mode, newVal); setNewVal(""); } };
+
   return (
     <Modal animationType="slide" transparent visible onRequestClose={onClose}>
       <View style={s.modalWrap}>
@@ -1664,13 +1717,60 @@ function CategoriesModal({ categories, onAdd, onDelete, requestConfirm, onClose 
             </View>
             <Pressable testID="categories-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
           </View>
-          <ScrollView testID="categories-modal" style={s.detailScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            {section("income", categories.income, incNew, setIncNew)}
-            {section("expense", categories.expense, expNew, setExpNew)}
+          <View style={[s.modeToggle, { marginHorizontal: 20, marginBottom: 6 }]}>
+            <Pressable testID="categories-tab-income" onPress={() => { setMode("income"); setColorOpen(null); }} style={[s.modeBtn, mode === "income" && s.modeBtnSel]}><Text style={[s.modeText, mode === "income" && s.modeTextSel]}>Income products</Text></Pressable>
+            <Pressable testID="categories-tab-expense" onPress={() => { setMode("expense"); setColorOpen(null); }} style={[s.modeBtn, mode === "expense" && s.modeBtnSel]}><Text style={[s.modeText, mode === "expense" && s.modeTextSel]}>Expense categories</Text></Pressable>
+          </View>
+          <Text style={[s.trendHint, { marginHorizontal: 20, marginBottom: 4 }]}>Hold the ⋮⋮ handle to drag & reorder. Tap the colour dot to recolour.</Text>
+          <View testID="categories-modal" style={{ flex: 1, paddingHorizontal: 20 }}>
+            <DraggableFlatList
+              data={list}
+              keyExtractor={(item) => `${mode}-${item}`}
+              renderItem={renderItem}
+              onDragEnd={({ data }) => onReorder(mode, data)}
+              activationDistance={12}
+              containerStyle={{ flexGrow: 0 }}
+              ListEmptyComponent={<Text style={[s.emptyCopy, { textAlign: "left", marginVertical: 12 }]}>No categories yet. Add one below.</Text>}
+            />
+          </View>
+          <View style={[s.newCatRow, { marginHorizontal: 20, marginBottom: 24 }]}>
+            <TextInput testID={`category-input-${mode}`} value={newVal} onChangeText={setNewVal} placeholder={mode === "income" ? "Add product (e.g. Coir Rope)" : "Add category (e.g. Rent)"} placeholderTextColor="#9DA49D" style={[s.textInputBox, { flex: 1 }]} returnKeyType="done" onSubmitEditing={add} />
+            <Pressable testID={`category-add-${mode}`} onPress={add} style={s.newCatSave}><Text style={s.newCatSaveText}>Add</Text></Pressable>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function ProfileModal({ profile, onSave, onClose }: { profile: Profile; onSave: (p: Profile) => void; onClose: () => void }) {
+  const [company, setCompany] = useState(profile.company);
+  const [user, setUser] = useState(profile.user);
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={s.modalWrap}>
+        <View style={s.sheet}>
+          <View style={s.sheetHandle} />
+          <View style={[s.formHead, s.detailHeaderPad]}>
+            <View>
+              <Text style={s.detailOverline}>BUSINESS PROFILE</Text>
+              <Text style={s.formTitle}>Edit profile</Text>
+            </View>
+            <Pressable testID="profile-close" onPress={onClose}><MaterialCommunityIcons name="close" size={24} color={C.ink} /></Pressable>
+          </View>
+          <ScrollView style={s.detailScroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <Text style={s.inputLabel}>COMPANY NAME</Text>
+            <TextInput testID="profile-company-input" value={company} onChangeText={setCompany} placeholder="e.g. SVKD COIR" placeholderTextColor="#9DA49D" style={s.textInputBox} returnKeyType="next" />
+            <Text style={[s.inputLabel, { marginTop: 14 }]}>YOUR NAME</Text>
+            <TextInput testID="profile-user-input" value={user} onChangeText={setUser} placeholder="e.g. Kumar" placeholderTextColor="#9DA49D" style={s.textInputBox} returnKeyType="done" />
+            <Text style={[s.trendHint, { marginTop: 12 }]}>Company name shows in the app header and on all PDFs. Your name is used in the greeting.</Text>
+            <Pressable testID="profile-save-button" onPress={() => onSave({ company: company.trim() || DEFAULT_PROFILE.company, user: user.trim() || DEFAULT_PROFILE.user })} style={[s.saveButton, { marginTop: 20 }]}>
+              <Text style={s.saveButtonText}>Save profile</Text>
+            </Pressable>
             <View style={{ height: 30 }} />
           </ScrollView>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -1687,7 +1787,7 @@ function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totI
     ? exps.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.category)}</td><td>${escapeHtml(r.description || (r.category === "Husk" && r.trips ? `${r.trips} trips @ ₹${r.costPerTon}/trip` : ""))}</td><td class="amt">${escapeHtml(money(r.amount + (r.repairAmount || 0)))}</td></tr>`).join("")
     : `<tr><td colspan="4" class="empty">No expenses recorded</td></tr>`;
   return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
-    <h1>SVKD COIR</h1>
+    <h1>${escapeHtml(BRAND)}</h1>
     <div class="sub">${escapeHtml(monthName)} · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
     <div class="cards">
       <div class="card"><div class="k">Total Income</div><div class="v inc">${escapeHtml(money(totIn))}</div></div>
@@ -1704,7 +1804,7 @@ function buildMonthHTML(monthName: string, incs: Income[], exps: Expense[], totI
       ...incs.map((r) => ({ date: r.date, label: `${r.product}${r.name ? ` · ${r.name}` : ""}`, photos: photosOf(r) })),
       ...exps.map((r) => ({ date: r.date, label: `${r.category}${r.description ? ` · ${r.description}` : ""}`, photos: photosOf(r) })),
     ].flatMap((x) => x.photos.map((p) => ({ date: x.date, label: x.label, photo: p }))))}
-    <div class="foot">Stored on device · SVKD COIR</div>
+    <div class="foot">Stored on device · ${escapeHtml(BRAND)}</div>
   </body></html>`;
 }
 
@@ -1717,10 +1817,10 @@ function receiptsHTML(items: { date: string; label: string; photo?: string }[]) 
 function buildCustomerHTML(name: string, records: Income[], total: number, pending: number) {
   const sorted = [...records].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   const rows = sorted.map((r) => `<tr><td>${displayDate(r.date)}</td><td>${escapeHtml(r.product)}</td><td>${r.tons ? escapeHtml(`${r.tons}t @ ₹${r.costPerTon}/t`) : "—"}</td><td>${dueOf(r) > 0 ? `Due ${escapeHtml(money(dueOf(r)))}` : "Paid"}</td><td class="amt">${escapeHtml(money(r.amount))}</td></tr>`).join("");
-  const receipts = receiptsHTML(sorted.map((r) => ({ date: r.date, label: `${r.product}${r.name ? ` · ${r.name}` : ""}`, photo: r.photo })));
+  const receipts = receiptsHTML(sorted.flatMap((r) => photosOf(r).map((p) => ({ date: r.date, label: `${r.product}${r.name ? ` · ${r.name}` : ""}`, photo: p }))));
   return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
     <h1>Statement · ${escapeHtml(name)}</h1>
-    <div class="sub">SVKD COIR · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
+    <div class="sub">${escapeHtml(BRAND)} · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
     <div class="cards">
       <div class="card"><div class="k">Total Purchased</div><div class="v inc">${escapeHtml(money(total))}</div></div>
       <div class="card"><div class="k">Amount Paid</div><div class="v">${escapeHtml(money(total - pending))}</div></div>
@@ -1731,7 +1831,7 @@ function buildCustomerHTML(name: string, records: Income[], total: number, pendi
     <tbody>${rows || `<tr><td colspan="5" class="empty">No purchases</td></tr>`}</tbody>
     <tfoot><tr><td colspan="4">Outstanding due</td><td class="amt">${escapeHtml(money(pending))}</td></tr></tfoot></table>
     ${receipts}
-    <div class="foot">Thank you for your business · SVKD COIR</div>
+    <div class="foot">Thank you for your business · ${escapeHtml(BRAND)}</div>
   </body></html>`;
 }
 
@@ -1743,7 +1843,7 @@ function buildEntityHTML(name: string, isCustomer: boolean, txns: EntityTxn[], t
   const dueLabel = isCustomer ? "Outstanding Due" : "Balance to Pay";
   return `<!doctype html><html><head><meta charset="utf-8" /><style>${pdfStyle}</style></head><body>
     <h1>Statement · ${escapeHtml(name)}</h1>
-    <div class="sub">SVKD COIR · ${isCustomer ? "Customer" : "Supplier"} · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
+    <div class="sub">${escapeHtml(BRAND)} · ${isCustomer ? "Customer" : "Supplier"} · Generated ${escapeHtml(displayDate(new Date().toISOString()))}</div>
     <div class="cards">
       <div class="card"><div class="k">${totalLabel}</div><div class="v ${isCustomer ? "inc" : "exp"}">${escapeHtml(money(total))}</div></div>
       <div class="card"><div class="k">Paid</div><div class="v">${escapeHtml(money(total - pending))}</div></div>
@@ -1754,7 +1854,7 @@ function buildEntityHTML(name: string, isCustomer: boolean, txns: EntityTxn[], t
     <tbody>${rows || `<tr><td colspan="4" class="empty">No transactions</td></tr>`}</tbody>
     <tfoot><tr><td colspan="3">${dueLabel}</td><td class="amt">${escapeHtml(money(pending))}</td></tr></tfoot></table>
     ${receipts}
-    <div class="foot">${isCustomer ? "Thank you for your business" : "Statement for your records"} · SVKD COIR</div>
+    <div class="foot">${isCustomer ? "Thank you for your business" : "Statement for your records"} · ${escapeHtml(BRAND)}</div>
   </body></html>`;
 }
 

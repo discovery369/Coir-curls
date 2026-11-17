@@ -80,3 +80,9 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/
+.env
+**/.env
+.emergent/testing/
+**/.emergent/testing/
+node_modules/
+**/node_modules/
