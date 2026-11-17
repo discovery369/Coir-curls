@@ -1,5 +1,5 @@
 const CACHE_PREFIX="svkd-coir-offline-";
-const CACHE_VERSION="v4";
+const CACHE_VERSION="v5";
 const CACHE_NAME=CACHE_PREFIX+CACHE_VERSION;
 const APP_ROOT=new URL("./",self.registration.scope);
 const INDEX_URL=new URL("index.html",APP_ROOT);
@@ -29,7 +29,7 @@ self.addEventListener("install",event=>{
         await cache.put(url.href,response.clone());
       }));
       const failed=results.filter(x=>x.status==="rejected");
-      if(failed.some(x=>/\\.js|\\.css/.test(String(x.reason)))) throw new Error("App bundle cache failed");
+      if(failed.some(x=>/\.js|\.css/.test(String(x.reason)))) throw new Error("App bundle cache failed");
     }catch(error){await caches.delete(CACHE_NAME);throw error;}
     await self.skipWaiting();
   })());
@@ -62,7 +62,7 @@ self.addEventListener("fetch",event=>{
   }
   event.respondWith((async()=>{
     const cache=await caches.open(CACHE_NAME);
-    const cached=await cache.match(request);
+    const cached=await cache.match(request,{ignoreSearch:true});
     if(cached) return cached;
     try{return await cacheResponse(cache,request,await fetch(request));}
     catch(_){return new Response("Offline resource not cached: "+url.pathname,{status:503,statusText:"Offline resource not cached"});}
