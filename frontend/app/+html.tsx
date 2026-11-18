@@ -67,26 +67,7 @@ export default function Root({ children }: PropsWithChildren) {
   }}
 />
 
-          if ("serviceWorker" in navigator) {
-            window.addEventListener("load", function () {
-              var swUrl = new URL("sw.js", document.baseURI);
-              navigator.serviceWorker.register(swUrl.href).then(function () {
-                // The first visit loads before the worker can control it.
-                // Reload once after control so all app assets enter the offline cache.
-                if (!navigator.serviceWorker.controller) {
-                  navigator.serviceWorker.addEventListener("controllerchange", function () {
-                    if (!sessionStorage.getItem("svkd-sw-first-control")) {
-                      sessionStorage.setItem("svkd-sw-first-control", "1");
-                      window.location.reload();
-                    }
-                  }, { once: true });
-                }
-              }).catch(function (error) {
-                console.warn("[SVKD COIR] Offline worker registration failed:", error);
-              });
-            });
-          }
-        ` }} />
+          
       </head>
       <body
         style={{
