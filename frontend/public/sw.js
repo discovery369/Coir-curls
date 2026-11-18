@@ -29,7 +29,7 @@ self.addEventListener("install",event=>{
         await cache.put(url.href,response.clone());
       }));
       const failed=results.filter(x=>x.status==="rejected");
-      if(failed.some(x=>/\.js|\.css/.test(String(x.reason)))) throw new Error("App bundle cache failed");
+      if(failed.some(x=>/\.(js|css|ttf|otf|woff2?)/i.test(String(x.reason)))) throw new Error("App bundle or font cache failed");
     }catch(error){await caches.delete(CACHE_NAME);throw error;}
     await self.skipWaiting();
   })());
