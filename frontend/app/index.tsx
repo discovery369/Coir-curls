@@ -214,7 +214,19 @@ export default function Index() {
             onOpenVendors={() => setShowVendors(true)}
             onOpenCategories={() => setShowCategories(true)}
             onOpenProfile={() => setShowProfile(true)}
-            onRestore={(inc, exp) => { setIncomes(inc); setExpenses(exp); }}
+            onRestore={(inc, exp, cats, importedProfile, importedBackups) => {
+  const safetyBackup: Backup = {
+    id: genId(),
+    createdAt: new Date().toISOString(),
+    incomes,
+    expenses,
+  };
+  setBackups((prev) => [safetyBackup, ...importedBackups, ...prev].slice(0, 30));
+  setIncomes(inc);
+  setExpenses(exp);
+  setCategories(cats);
+  setProfile(importedProfile);
+}}
             requestConfirm={setConfirm}
             onClear={() => setConfirm({ title: "Clear all records?", message: "This cannot be undone.", confirmLabel: "Clear all", onConfirm: () => { setIncomes([]); setExpenses([]); } })}
           />
@@ -1275,7 +1287,7 @@ function CustomersModal({ incomes, onClose }: { incomes: Income[]; onClose: () =
   );
 }
 
-function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, onOpenVendors, onOpenCategories, onOpenProfile, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onOpenBackups: () => void; onOpenVendors: () => void; onOpenCategories: () => void; onOpenProfile: () => void; onRestore: (inc: Income[], exp: Expense[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
+function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, onOpenVendors, onOpenCategories, onOpenProfile, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onOpenBackups: () => void; onOpenVendors: () => void; onOpenCategories: () => void; onOpenProfile: () => void; onRestore: (inc: Income[], exp: Expense[], cats: Categories, importedProfile: Profile, importedBackups: Backup[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
   const [notice, setNotice] = useState("");
 
   const doRestore = async () => {
@@ -1284,16 +1296,92 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, 
       if (res.canceled || !res.assets?.length) return;
       const asset = res.assets[0];
       const content = Platform.OS === "web" ? await (await fetch(asset.uri)).text() : await FileSystem.readAsStringAsync(asset.uri);
+      
       const parsed = JSON.parse(content);
-      if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.incomes) || !Array.isArray(parsed.expenses)) { setNotice("That file is not a SVKD COIR backup."); return; }
-      const incs = (parsed.incomes as unknown[]).map((x) => sanitizeIncome((x || {}) as Record<string, unknown>));
-      const exps = (parsed.expenses as unknown[]).map((x) => sanitizeExpense((x || {}) as Record<string, unknown>));
+
+      const isFullV2 =
+        parsed?.app === "SVKD COIR" &&
+        parsed?.format === "svkd-coir-full-backup" &&
+        parsed?.version === 2 &&
+        parsed?.data;
+
+      const source = isFullV2 ? parsed.data.records : parsed;
+
+      if (
+        !source ||
+        !Array.isArray(source.incomes) ||
+        !Array.isArray(source.expenses)
+      ) {
+        setNotice("That file is not a valid SVKD COIR backup.");
+        return;
+      }
+
+      const incs = source.incomes.map((x: unknown) =>
+        sanitizeIncome((x || {}) as Record<string, unknown>)
+      );
+
+      const exps = source.expenses.map((x: unknown) =>
+        sanitizeExpense((x || {}) as Record<string, unknown>)
+      );
+
+      const categoriesSource = isFullV2 ? parsed.data.categories : null;
+
+      const importedCategories: Categories = {
+        income:
+          Array.isArray(categoriesSource?.income) && categoriesSource.income.length
+            ? categoriesSource.income.map(toStr).filter(Boolean)
+            : DEFAULT_INCOME_CATS,
+        expense:
+          Array.isArray(categoriesSource?.expense) && categoriesSource.expense.length
+            ? categoriesSource.expense.map(toStr).filter(Boolean)
+            : DEFAULT_EXPENSE_CATS,
+        colors:
+          categoriesSource?.colors &&
+          typeof categoriesSource.colors === "object" &&
+          !Array.isArray(categoriesSource.colors)
+            ? categoriesSource.colors
+            : {},
+      };
+
+      const profileSource = isFullV2 ? parsed.data.profile : null;
+
+      const importedProfile: Profile = {
+        company: toStr(profileSource?.company).trim() || DEFAULT_PROFILE.company,
+        user: toStr(profileSource?.user).trim() || DEFAULT_PROFILE.user,
+      };
+
+      const importedBackups: Backup[] =
+        isFullV2 && Array.isArray(parsed.data.localBackups)
+          ? parsed.data.localBackups
+              .filter((b: any) => b && Array.isArray(b.incomes) && Array.isArray(b.expenses))
+              .map((b: any) => ({
+                id: toStr(b.id) || genId(),
+                createdAt: toIso(b.createdAt),
+                incomes: b.incomes.map((x: unknown) =>
+                  sanitizeIncome((x || {}) as Record<string, unknown>)
+                ),
+                expenses: b.expenses.map((x: unknown) =>
+                  sanitizeExpense((x || {}) as Record<string, unknown>)
+                ),
+              }))
+          : [];
+
       requestConfirm({
         title: "Restore this backup?",
-        message: `This replaces your current data with ${incs.length} income and ${exps.length} expense records.`,
+        message: `This replaces your current data with ${incs.length} income and ${exps.length} expense records. Your current data will first be saved as a safety backup.`,
         confirmLabel: "Restore",
-        onConfirm: () => { onRestore(incs, exps); setNotice("Records restored successfully."); },
+        onConfirm: () => {
+          onRestore(
+            incs,
+            exps,
+            importedCategories,
+            importedProfile,
+            importedBackups
+          );
+          setNotice("Full backup restored successfully.");
+        },
       });
+
     } catch { setNotice("Could not read that file."); }
   };
 
