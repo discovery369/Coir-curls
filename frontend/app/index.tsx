@@ -207,6 +207,7 @@ export default function Index() {
         <Text style={s.overline}>{title.toUpperCase()}</Text>
         {tab === "settings" ? (
           <Settings
+            restoreReady={ready && backupsReady && catsReady && profileReady}
             incomes={incomes}
             expenses={expenses}
             onOpenCustomers={() => setShowCustomers(true)}
@@ -1287,10 +1288,14 @@ function CustomersModal({ incomes, onClose }: { incomes: Income[]; onClose: () =
   );
 }
 
-function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, onOpenVendors, onOpenCategories, onOpenProfile, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; onClear: () => void; onOpenCustomers: () => void; onOpenBackups: () => void; onOpenVendors: () => void; onOpenCategories: () => void; onOpenProfile: () => void; onRestore: (inc: Income[], exp: Expense[], cats: Categories, importedProfile: Profile, importedBackups: Backup[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
+function Settings({ incomes, expenses, restoreReady, onClear, onOpenCustomers, onOpenBackups, onOpenVendors, onOpenCategories, onOpenProfile, onRestore, requestConfirm }: { incomes: Income[]; expenses: Expense[]; restoreReady: boolean; onClear: () => void; onOpenCustomers: () => void; onOpenBackups: () => void; onOpenVendors: () => void; onOpenCategories: () => void; onOpenProfile: () => void; onRestore: (inc: Income[], exp: Expense[], cats: Categories, importedProfile: Profile, importedBackups: Backup[]) => void; requestConfirm: (c: { title: string; message: string; confirmLabel: string; onConfirm: () => void }) => void }) {
   const [notice, setNotice] = useState("");
 
   const doRestore = async () => {
+    if (!restoreReady) {
+  setNotice("Please wait for app data to finish loading, then try again.");
+  return;
+    }
     try {
       const res = await DocumentPicker.getDocumentAsync({ type: ["application/json", "text/plain", "*/*"], copyToCacheDirectory: true });
       if (res.canceled || !res.assets?.length) return;
@@ -1412,7 +1417,7 @@ function Settings({ incomes, expenses, onClear, onOpenCustomers, onOpenBackups, 
         <View style={s.settingCopy}><Text style={s.settingTitle}>Local backups</Text><Text style={s.settingSub}>Save and restore snapshots kept on this device.</Text></View>
         <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
       </Pressable>
-      <Pressable testID="restore-button" style={s.settingRow} onPress={doRestore}>
+      <Pressable testID="restore-button" disabled={!restoreReady} style={s.settingRow} onPress={doRestore}>
         <MaterialCommunityIcons name="cloud-download-outline" size={22} color={C.forest} />
         <View style={s.settingCopy}><Text style={s.settingTitle}>Restore from backup</Text><Text style={s.settingSub}>Load records from a backup file (replaces current data).</Text></View>
         <MaterialCommunityIcons name="chevron-right" size={20} color={C.muted} />
