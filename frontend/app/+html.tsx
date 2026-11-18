@@ -29,7 +29,44 @@ export default function Root({ children }: PropsWithChildren) {
             `,
           }}
         />
-        <script dangerouslySetInnerHTML={{ __html: `
+        
+<script
+  dangerouslySetInnerHTML={{
+    __html: `
+      (function () {
+        if (!("serviceWorker" in navigator)) return;
+
+        window.addEventListener("load", async function () {
+          try {
+            var appRoot = new URL("./", window.location.href);
+            var swUrl = new URL("sw.js", appRoot);
+
+            var registration = await navigator.serviceWorker.register(
+              swUrl.href,
+              {
+                scope: appRoot.pathname,
+                updateViaCache: "none"
+              }
+            );
+
+            console.log(
+              "[SVKD COIR] Service worker registered:",
+              registration.scope
+            );
+
+            await registration.update();
+          } catch (error) {
+            console.error(
+              "[SVKD COIR] Service worker registration failed:",
+              error
+            );
+          }
+        });
+      })();
+    `,
+  }}
+/>
+
           if ("serviceWorker" in navigator) {
             window.addEventListener("load", function () {
               var swUrl = new URL("sw.js", document.baseURI);
