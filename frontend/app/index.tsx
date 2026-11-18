@@ -190,7 +190,17 @@ export default function Index() {
   const title = tab === "settings" ? "Settings" : tab === "calendar" ? "Calendar" : tab === "income" ? "Income" : tab === "expenses" ? "Expenses" : "Overview";
   BRAND = profile.company;
   const greetName = profile.user ? profile.user.charAt(0).toUpperCase() + profile.user.slice(1) : "there";
-
+  if (!ready || !backupsReady || !catsReady || !profileReady) {
+    return (
+      <SafeAreaView style={s.safe}>
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+          <Text style={{ color: "#1b3d2f", fontSize: 16 }}>
+            Loading your saved data...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
   return (
     <SafeAreaView style={s.safe}>
       <View style={s.header}>
