@@ -1,5 +1,5 @@
 const CACHE_PREFIX="svkd-coir-offline-";
-const CACHE_VERSION="v5";
+const CACHE_VERSION="v6";
 const CACHE_NAME=CACHE_PREFIX+CACHE_VERSION;
 const APP_ROOT=new URL("./",self.registration.scope);
 const INDEX_URL=new URL("index.html",APP_ROOT);
