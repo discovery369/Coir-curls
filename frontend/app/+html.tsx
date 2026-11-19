@@ -30,42 +30,70 @@ export default function Root({ children }: PropsWithChildren) {
           }}
         />
         
-<script
-  dangerouslySetInnerHTML={{
-    __html: `
-      (function () {
-        if (!("serviceWorker" in navigator)) return;
 
-        window.addEventListener("load", async function () {
-          try {
-            var appRoot = new URL("./", window.location.href);
-            var swUrl = new URL("sw.js", appRoot);
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function () {
+                function showStatus(message) {
+                  var box = document.getElementById("svkd-sw-status");
+                  if (!box) {
+                    box = document.createElement("div");
+                    box.id = "svkd-sw-status";
+                    box.style.cssText =
+                      "position:fixed;z-index:999999;top:8px;left:8px;right:8px;padding:12px;background:#173C2C;color:white;font:14px Arial;border-radius:8px;white-space:pre-wrap;";
+                    document.body.appendChild(box);
+                  }
+                  box.textContent = "SVKD COIR Offline Check\\n" + message;
+                }
 
-            var registration = await navigator.serviceWorker.register(
-              swUrl.href,
-              {
-                scope: appRoot.pathname,
-                updateViaCache: "none"
-              }
-            );
+                async function registerWorker() {
+                  if (!("serviceWorker" in navigator)) {
+                    showStatus("ERROR: Service workers are not supported.");
+                    return;
+                  }
 
-            console.log(
-              "[SVKD COIR] Service worker registered:",
-              registration.scope
-            );
+                  try {
+                    showStatus("Checking service worker...");
 
-            await registration.update();
-          } catch (error) {
-            console.error(
-              "[SVKD COIR] Service worker registration failed:",
-              error
-            );
-          }
-        });
-      })();
-    `,
-  }}
-/>
+                    var appRoot = new URL("./", window.location.href);
+                    var swUrl = new URL("sw.js", appRoot);
+
+                    showStatus("Registering: " + swUrl.href);
+
+                    var registration =
+                      await navigator.serviceWorker.register(
+                        swUrl.href,
+                        { scope: appRoot.pathname, updateViaCache: "none" }
+                      );
+
+                    await registration.update();
+
+                    showStatus(
+                      "REGISTRATION SUCCESS\\n" +
+                      "Scope: " + registration.scope + "\\n" +
+                      "Active: " + !!registration.active + "\\n" +
+                      "Waiting: " + !!registration.waiting + "\\n" +
+                      "Installing: " + !!registration.installing
+                    );
+                  } catch (error) {
+                    showStatus(
+                      "REGISTRATION FAILED\\n" +
+                      error.name + ": " + error.message
+                    );
+                  }
+                }
+
+                if (document.readyState === "complete") {
+                  registerWorker();
+                } else {
+                  window.addEventListener("load", registerWorker);
+                }
+              })();
+            `,
+          }}
+        />
+
 
           
       </head>
