@@ -35,17 +35,7 @@ export default function Root({ children }: PropsWithChildren) {
           dangerouslySetInnerHTML={{
             __html: `
               (function () {
-                function showStatus(message) {
-                  var box = document.getElementById("svkd-sw-status");
-                  if (!box) {
-                    box = document.createElement("div");
-                    box.id = "svkd-sw-status";
-                    box.style.cssText =
-                      "position:fixed;z-index:999999;top:8px;left:8px;right:8px;padding:12px;background:#173C2C;color:white;font:14px Arial;border-radius:8px;white-space:pre-wrap;";
-                    document.body.appendChild(box);
-                  }
-                  box.textContent = "SVKD COIR Offline Check\\n" + message;
-                }
+                function showStatus(message) {}
 
                 async function registerWorker() {
                   if (!("serviceWorker" in navigator)) {
