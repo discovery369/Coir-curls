@@ -67,8 +67,6 @@ export default function Root({ children }: PropsWithChildren) {
                         { scope: appRoot.pathname, updateViaCache: "none" }
                       );
 
-                    await registration.update();
-
                     showStatus(
                       "REGISTRATION SUCCESS\\n" +
                       "Scope: " + registration.scope + "\\n" +
