@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+  <meta name="theme-color" content="#173C2C" />
+  <title>SVKD COIR</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <style>
+    html, body, #root {
+      height: 100%;
+      margin: 0;
+    }
+    body {
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script>
+    (function () {
+      function showStatus(message) {
+        var box = document.getElementById("svkd-sw-status");
+        if (!box) {
+          box = document.createElement("div");
+          box.id = "svkd-sw-status";
+          box.style.cssText =
+            "position:fixed;z-index:999999;top:8px;left:8px;right:8px;padding:12px;background:#173C2C;color:white;font:14px Arial;border-radius:8px;white-space:pre-wrap;";
+          document.body.appendChild(box);
+        }
+        box.textContent = "SVKD COIR Offline Check\n" + message;
+      }
+
+      async function registerWorker() {
+        if (!("serviceWorker" in navigator)) {
+          showStatus("ERROR: Service workers are not supported.");
+          return;
+        }
+
+        try {
+          showStatus("Checking service worker...");
+          var appRoot = new URL("./", window.location.href);
+          var swUrl = new URL("sw.js", appRoot);
+
+          showStatus("Registering: " + swUrl.href);
+
+          var registration = await navigator.serviceWorker.register(
+            swUrl.href,
+            {
+              scope: appRoot.pathname,
+              updateViaCache: "none"
+            }
+          );
+
+          await registration.update();
+
+          showStatus(
+            "REGISTRATION SUCCESS\n" +
+            "Scope: " + registration.scope + "\n" +
+            "Active: " + !!registration.active + "\n" +
+            "Waiting: " + !!registration.waiting + "\n" +
+            "Installing: " + !!registration.installing
+          );
+        } catch (error) {
+          showStatus(
+            "REGISTRATION FAILED\n" +
+            error.name + ": " + error.message
+          );
+        }
+      }
+
+      if (document.readyState === "complete") {
+        registerWorker();
+      } else {
+        window.addEventListener("load", registerWorker);
+      }
+    })();
+  </script>
+
+  <script src="/Coir-curls/_expo/static/js/web/entry-eff95ff196c51b189562f75971b5149c.js" defer></script>
+</body>
+</html>
