@@ -267,7 +267,7 @@ const [profileWritable, setProfileWritable] = useState(false);
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <Text style={s.overline}>{title.toUpperCase()}</Text>
         {tab === "settings" ? (
           <Settings
