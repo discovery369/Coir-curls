@@ -96,6 +96,10 @@ export default function Index() {
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [ready, setReady] = useState(false);
+  const [recordsWritable, setRecordsWritable] = useState(false);
+const [backupsWritable, setBackupsWritable] = useState(false);
+const [catsWritable, setCatsWritable] = useState(false);
+const [profileWritable, setProfileWritable] = useState(false);
   const [tab, setTab] = useState<Tab>("overview");
   const [editing, setEditing] = useState<{ kind: "income" | "expense"; id?: string } | null>(null);
   const [confirm, setConfirm] = useState<{ title: string; message: string; confirmLabel: string; onConfirm: () => void } | null>(null);
@@ -121,33 +125,83 @@ export default function Index() {
   const addressOptions = useMemo(() => Array.from(new Set(incomes.map((i) => i.address).filter(Boolean))), [incomes]);
   const expenseNameOptions = useMemo(() => Array.from(new Set(expenses.map((e) => e.description).filter(Boolean))), [expenses]);
 
+  
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY).then((raw) => {
-      if (raw) { const saved = JSON.parse(raw); setIncomes(saved.incomes || []); setExpenses(saved.expenses || []); }
-      setReady(true);
-    });
+      if (raw) {
+        const saved = JSON.parse(raw);
+        setIncomes(Array.isArray(saved.incomes) ? saved.incomes : []);
+        setExpenses(Array.isArray(saved.expenses) ? saved.expenses : []);
+      }
+      setRecordsWritable(true);
+    }).catch(() => {
+      // Do not overwrite storage if reading fails.
+    }).finally(() => setReady(true));
   }, []);
 
-  useEffect(() => { if (ready) AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ incomes, expenses })); }, [incomes, expenses, ready]);
+  useEffect(() => {
+    if (ready && recordsWritable) {
+      AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ incomes, expenses })).catch(() => {});
+    }
+  }, [incomes, expenses, ready, recordsWritable]);
 
-  useEffect(() => { AsyncStorage.getItem(BACKUPS_KEY).then((raw) => { if (raw) setBackups(JSON.parse(raw)); setBackupsReady(true); }); }, []);
-  useEffect(() => { if (backupsReady) AsyncStorage.setItem(BACKUPS_KEY, JSON.stringify(backups)); }, [backups, backupsReady]);
+  useEffect(() => {
+    AsyncStorage.getItem(BACKUPS_KEY).then((raw) => {
+      if (raw) setBackups(JSON.parse(raw));
+      setBackupsWritable(true);
+    }).catch(() => {
+      // Preserve unreadable backup data.
+    }).finally(() => setBackupsReady(true));
+  }, []);
+
+  useEffect(() => {
+    if (backupsReady && backupsWritable) {
+      AsyncStorage.setItem(BACKUPS_KEY, JSON.stringify(backups)).catch(() => {});
+    }
+  }, [backups, backupsReady, backupsWritable]);
 
   useEffect(() => {
     AsyncStorage.getItem(CATS_KEY).then((raw) => {
-      if (raw) { const c = JSON.parse(raw); setCategories({ income: Array.isArray(c.income) && c.income.length ? c.income : DEFAULT_INCOME_CATS, expense: Array.isArray(c.expense) && c.expense.length ? c.expense : DEFAULT_EXPENSE_CATS, colors: c.colors && typeof c.colors === "object" ? c.colors : {} }); }
-      setCatsReady(true);
-    });
+      if (raw) {
+        const c = JSON.parse(raw);
+        setCategories({
+          income: Array.isArray(c.income) && c.income.length ? c.income : DEFAULT_INCOME_CATS,
+          expense: Array.isArray(c.expense) && c.expense.length ? c.expense : DEFAULT_EXPENSE_CATS,
+          colors: c.colors && typeof c.colors === "object" ? c.colors : {},
+        });
+      }
+      setCatsWritable(true);
+    }).catch(() => {
+      // Keep defaults without overwriting unreadable saved categories.
+    }).finally(() => setCatsReady(true));
   }, []);
-  useEffect(() => { if (catsReady) AsyncStorage.setItem(CATS_KEY, JSON.stringify(categories)); }, [categories, catsReady]);
+
+  useEffect(() => {
+    if (catsReady && catsWritable) {
+      AsyncStorage.setItem(CATS_KEY, JSON.stringify(categories)).catch(() => {});
+    }
+  }, [categories, catsReady, catsWritable]);
 
   useEffect(() => {
     AsyncStorage.getItem(PROFILE_KEY).then((raw) => {
-      if (raw) { const p = JSON.parse(raw); setProfile({ company: (p.company || DEFAULT_PROFILE.company).trim() || DEFAULT_PROFILE.company, user: (p.user || DEFAULT_PROFILE.user).trim() || DEFAULT_PROFILE.user }); }
-      setProfileReady(true);
-    });
+      if (raw) {
+        const p = JSON.parse(raw);
+        setProfile({
+          company: (p.company || DEFAULT_PROFILE.company).trim() || DEFAULT_PROFILE.company,
+          user: (p.user || DEFAULT_PROFILE.user).trim() || DEFAULT_PROFILE.user,
+        });
+      }
+      setProfileWritable(true);
+    }).catch(() => {
+      // Keep defaults without overwriting unreadable saved profile data.
+    }).finally(() => setProfileReady(true));
   }, []);
-  useEffect(() => { if (profileReady) AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile)); }, [profile, profileReady]);
+
+  useEffect(() => {
+    if (profileReady && profileWritable) {
+      AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(profile)).catch(() => {});
+    }
+  }, [profile, profileReady, profileWritable]);
 
   const addCategory = (kind: "income" | "expense", name: string) => {
     const clean = name.trim();
@@ -190,7 +244,7 @@ export default function Index() {
   const title = tab === "settings" ? "Settings" : tab === "calendar" ? "Calendar" : tab === "income" ? "Income" : tab === "expenses" ? "Expenses" : "Overview";
   BRAND = profile.company;
   const greetName = profile.user ? profile.user.charAt(0).toUpperCase() + profile.user.slice(1) : "there";
-  if (!ready || !backupsReady || !catsReady || !profileReady) {
+  if (!ready) {
     return (
       <SafeAreaView style={s.safe}>
         <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
